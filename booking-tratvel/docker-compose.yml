@@ -1,0 +1,108 @@
+# API on its own — Postgres, migrations, and the server.
+#
+#   cp .env.docker.example .env
+#   docker compose up -d --build
+#
+# Self-contained: this brings its own database, so you can work on the API
+# without either front end. The stack-wide file one directory up runs all
+# three projects together; do not run both at once — they publish the same
+# ports and keep SEPARATE database volumes.
+
+name: travel-booking-api
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-booking_system}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PUBLISH_PORT:-5432}:5432"
+    healthcheck:
+      # Without this the API starts before Postgres accepts connections.
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-booking_system}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # A one-shot job rather than something the API does at boot: several API
+  # replicas starting together would otherwise race through the same
+  # migrations. Reuses the api image instead of declaring its own `build:` —
+  # two services building the same tag makes BuildKit collide on the export.
+  migrate:
+    image: travel-booking/api:${TAG:-latest}
+    pull_policy: never
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-booking_system}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    # `up` applies only what is pending, so re-running compose is harmless.
+    # On a database whose tables predate migration tracking, run
+    # `docker compose run --rm migrate npm run migrate:baseline` once first.
+    command: ["npm", "run", "migrate:up"]
+
+  api:
+    build:
+      context: .
+    image: travel-booking/api:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: 9001
+      HOST: 0.0.0.0
+      NODE_ENV: production
+      LOG_REQUESTS: ${LOG_REQUESTS:-true}
+
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-booking_system}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      # The server refuses to boot if this is missing or left at a placeholder.
+      JWT_SECRET: ${JWT_SECRET}
+
+      # Where Stripe returns the customer after checkout — the storefront.
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3001}
+
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    ports:
+      - "${API_PORT:-9001}:9001"
+    # Named so the front ends' own compose files can join it and reach the API
+    # as http://api:9001 during SSR. See their compose files.
+    networks:
+      - default
+
+volumes:
+  db-data:
+
+networks:
+  default:
+    # Fixed name so `travel-booking-api_default` is predictable from outside.
+    name: travel-booking-api_default

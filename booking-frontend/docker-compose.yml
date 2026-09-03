@@ -1,0 +1,38 @@
+# Storefront on its own.
+#
+#   cp .env.docker.example .env
+#   docker compose up -d --build
+#
+# It needs an API to talk to but does not start one — run the API's own
+# compose file first (../booking-tratvel), or point this at any reachable
+# deployment. The stack-wide file one directory up runs all three together;
+# do not run both at once, they publish the same port.
+
+name: travel-booking-storefront
+
+services:
+  storefront:
+    build:
+      context: .
+    image: travel-booking/storefront:${TAG:-latest}
+    restart: unless-stopped
+    environment:
+      PORT: 3001
+      HOST: 0.0.0.0
+      NODE_ENV: production
+
+      # Read by the visitor's BROWSER, so it must be an address they can
+      # resolve from their own machine.
+      NUXT_PUBLIC_API_BASE: ${PUBLIC_API_URL:-http://localhost:9001/api}
+
+      # Read by THIS container. The confirmation page fetches during SSR, and
+      # inside the container `localhost` is the storefront itself — so the
+      # public URL above would fail and the receipt would render empty.
+      # host.docker.internal is the machine running Docker, which works whether
+      # the API is another container publishing 9001 or a plain `npm start`.
+      NUXT_API_BASE_SERVER: ${SERVER_API_URL:-http://host.docker.internal:9001/api}
+    # Linux does not provide host.docker.internal by default; this adds it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${STOREFRONT_PORT:-3001}:3001"

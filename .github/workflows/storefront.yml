@@ -1,0 +1,129 @@
+# ── Storefront (booking-frontend, Nuxt 3) ───────────────────────────
+# Runs only when the storefront changes.
+
+name: Storefront
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'booking-frontend/**'
+      - '.github/workflows/storefront.yml'
+  pull_request:
+    paths:
+      - 'booking-frontend/**'
+      - '.github/workflows/storefront.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: storefront-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: booking-frontend
+
+jobs:
+  # ── does it build? ────────────────────────────────────────────────
+  # There is no test suite here, so `nuxt build` is the real gate: it
+  # type-checks, compiles every component and fails on a broken import or
+  # template. Catching that here is the whole point — a Docker build that
+  # gets this far has already burned several minutes.
+  verify:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: booking-frontend/package-lock.json
+
+      # --ignore-scripts skips the `nuxt prepare` postinstall so the failure
+      # you see is an install failure, not a confusing prepare failure.
+      # `npm ci` also rejects a package-lock.json that has drifted from
+      # package.json, which is the single most common reason the Docker build
+      # breaks while a local `npm run dev` still works.
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npx nuxt prepare && npm run build
+        env:
+          # Only a build-time placeholder. The real value is injected at
+          # container start through NUXT_PUBLIC_API_BASE, so one image works
+          # in every environment.
+          NUXT_PUBLIC_API_BASE: http://localhost:9001/api
+
+      - name: Report bundle size
+        run: |
+          {
+            echo "### Storefront build"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Server bundle | $(du -sh .output/server | cut -f1) |"
+            echo "| Client assets | $(du -sh .output/public | cut -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── build and publish the image ───────────────────────────────────
+  image:
+    name: Build and push image
+    needs: verify
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR rejects uppercase; org names are often mixed case.
+      - name: Work out the image name
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/travel-booking-storefront" >> "$GITHUB_OUTPUT"
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./booking-frontend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=storefront
+          cache-to: type=gha,mode=max,scope=storefront
+
+      - name: Summary
+        run: |
+          {
+            echo "### Storefront image published"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

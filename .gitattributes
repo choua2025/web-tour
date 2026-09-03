@@ -1,0 +1,19 @@
+# Normalise text in the repository, and let checkout decide per platform.
+* text=auto
+
+# These MUST stay LF regardless of platform.
+#
+# Docker's parser treats a backslash followed by CR+LF as a literal backslash,
+# so a Dockerfile checked out with Windows line endings fails to build with
+# "Unknown instruction: &&" on the continuation lines. Shell scripts and YAML
+# have the same class of problem.
+Dockerfile        text eol=lf
+*.Dockerfile      text eol=lf
+.dockerignore     text eol=lf
+docker-compose*.yml text eol=lf
+*.sh              text eol=lf
+.github/**/*.yml  text eol=lf
+.github/**/*.yaml text eol=lf
+
+# Lockfiles are generated; keep diffs out of review noise.
+package-lock.json -diff linguist-generated=true

@@ -1,0 +1,30 @@
+# Admin console on its own.
+#
+#   cp .env.docker.example .env
+#   docker compose up -d --build
+#
+# It needs an API to talk to but does not start one — run the API's own
+# compose file first (../booking-tratvel), or point this at any reachable
+# deployment. The stack-wide file one directory up runs all three together;
+# do not run both at once, they publish the same port.
+
+name: travel-booking-admin
+
+services:
+  admin:
+    build:
+      context: .
+    image: travel-booking/admin:${TAG:-latest}
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      NODE_ENV: production
+
+      # Read by the browser, not by this container — the admin console fetches
+      # everything from onMounted, so nothing here calls the API during SSR
+      # and there is no server-side counterpart to set (unlike the storefront,
+      # whose confirmation page renders its receipt server-side).
+      NUXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:9001/api}
+    ports:
+      - "${ADMIN_PORT:-3000}:3000"

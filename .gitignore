@@ -1,0 +1,31 @@
+# Root of the monorepo. Each project also has its own .gitignore for the
+# things only it produces; this covers the shared surface.
+
+# ── secrets ─────────────────────────────────────────────────────────
+# docker-compose.yml reads .env. Committing it would publish JWT_SECRET,
+# the Stripe keys, the Cloudinary secret and the mail password.
+# .env.docker.example IS tracked — it is the template, with no values.
+.env
+.env.*
+!.env.docker.example
+!.env.example
+
+# ── dependencies and build output ───────────────────────────────────
+node_modules/
+.nuxt/
+.output/
+dist/
+.nitro/
+.cache/
+
+# ── logs and local scratch ──────────────────────────────────────────
+*.log
+npm-debug.log*
+uploads/
+tmp/
+
+# ── editors and OS ──────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

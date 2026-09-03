@@ -1,0 +1,153 @@
+/* Noto Sans covers Latin; the Lao and Thai families supply the glyphs it
+   does not carry, and the font stack falls through to them per script. */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&family=Noto+Sans+Lao:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    body {
+        @apply bg-bg-main text-text-main antialiased;
+    }
+
+    /* Dense admin tables and forms read better on a tighter line box than the
+       generous default used for prose. */
+    body {
+        line-height: 1.5;
+    }
+}
+
+@layer components {
+
+    /* ── Surfaces ───────────────────────────────────────────────
+       `glass` and `card-premium` are kept as names because pages across the
+       app already reference them; they are now plain white panels. */
+    .glass {
+        @apply bg-white border border-line;
+    }
+
+    .card,
+    .card-premium {
+        @apply bg-bg-card border border-line rounded-lg p-6;
+    }
+
+    .card-premium:hover {
+        /* deliberately inert: panels in an admin should not move under the cursor */
+    }
+
+    .panel-header {
+        @apply px-6 py-4 border-b border-line flex flex-wrap items-center justify-between gap-4;
+    }
+
+    /* ── Buttons ────────────────────────────────────────────────── */
+    .btn-primary-custom {
+        @apply bg-primary hover:bg-primary-hover text-white px-4 py-2 rounded-md text-sm font-medium
+        inline-flex items-center gap-2 border border-transparent
+        focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50;
+    }
+
+    .btn-outline-custom {
+        @apply bg-white hover:bg-slate-50 text-text-main px-4 py-2 rounded-md text-sm font-medium
+        inline-flex items-center gap-2 border border-line
+        focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50;
+    }
+
+    .btn-danger {
+        @apply bg-danger hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium
+        inline-flex items-center gap-2 border border-transparent
+        focus:outline-none focus:ring-2 focus:ring-danger/30 disabled:opacity-50;
+    }
+
+    /* ── Forms ──────────────────────────────────────────────────── */
+    .label {
+        @apply block text-sm font-medium text-text-main mb-1.5;
+    }
+
+    .input-custom {
+        @apply w-full bg-white border border-line rounded-md px-3 py-2 text-sm text-text-main
+        placeholder:text-text-dim focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20;
+    }
+
+    select.input-custom {
+        @apply pr-8;
+    }
+
+    .hint {
+        @apply text-xs text-text-muted mt-1;
+    }
+
+    /* ── Tables ─────────────────────────────────────────────────── */
+    .table-admin {
+        @apply w-full text-left border-collapse text-sm;
+    }
+
+    .table-admin thead th {
+        @apply px-6 py-3 bg-slate-50 border-b border-line
+        text-xs font-semibold text-text-muted uppercase tracking-wide whitespace-nowrap;
+    }
+
+    .table-admin tbody td {
+        @apply px-6 py-3 border-b border-line text-text-main align-middle;
+    }
+
+    .table-admin tbody tr:hover {
+        @apply bg-slate-50;
+    }
+
+    /* ── Status pills ───────────────────────────────────────────── */
+    .status-pill-custom {
+        @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border;
+    }
+
+    .pill-success {
+        @apply bg-green-50 text-green-700 border-green-200;
+    }
+
+    .pill-warning {
+        @apply bg-amber-50 text-amber-700 border-amber-200;
+    }
+
+    .pill-danger {
+        @apply bg-red-50 text-red-700 border-red-200;
+    }
+
+    .pill-info {
+        @apply bg-blue-50 text-blue-700 border-blue-200;
+    }
+
+    .pill-neutral {
+        @apply bg-slate-100 text-slate-700 border-slate-200;
+    }
+
+    /* ── Page heading ───────────────────────────────────────────── */
+    .page-title {
+        @apply text-xl font-semibold text-text-main;
+    }
+
+    .page-subtitle {
+        @apply text-sm text-text-muted mt-1;
+    }
+}
+
+/* Scrollbars: visible enough to grab, quiet enough to ignore. */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+    background-clip: content-box;
+}

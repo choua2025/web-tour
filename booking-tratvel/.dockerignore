@@ -1,0 +1,27 @@
+# Everything here would otherwise be shipped into the build context, which
+# slows every build and can leak secrets into an image layer.
+
+# Dependencies are installed inside the image from the lockfile.
+node_modules
+
+# Secrets — the container gets these as environment variables instead.
+.env
+.env.*
+!.env.example
+
+# Local noise
+.git
+.gitignore
+*.log
+logs
+.DS_Store
+.idea
+.vscode
+
+# Docs and API collections are not needed at runtime
+*.md
+Travel_Booking_API.postman_collection.json
+
+# Never copy a Dockerfile into its own image
+Dockerfile
+.dockerignore

@@ -1,0 +1,105 @@
+# ── Whole stack ─────────────────────────────────────────────────────
+# The three project workflows each build one image. This one checks the
+# pieces still fit together: compose parses, and the images it names start
+# and answer. It runs on changes to compose itself, or on demand.
+
+name: Stack
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'docker-compose.yml'
+      - '**/docker-compose.yml'
+      - '.env.docker.example'
+      - '.github/workflows/stack.yml'
+  pull_request:
+    paths:
+      - 'docker-compose.yml'
+      - '**/docker-compose.yml'
+      - '.env.docker.example'
+      - '.github/workflows/stack.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: stack-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Bring the stack up and check it answers
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # compose refuses to start without these; the values are throwaway.
+      - name: Write a CI .env
+        run: |
+          cat > .env <<'ENVEOF'
+          DB_NAME=booking_ci
+          DB_USER=postgres
+          DB_PASSWORD=ci-postgres-password
+          JWT_SECRET=ci-only-secret-not-used-anywhere-else
+          PUBLIC_API_URL=http://localhost:9001/api
+          FRONTEND_URL=http://localhost:3001
+          LOG_REQUESTS=false
+          ENVEOF
+
+      # Catches a typo or an undefined variable before anything is built.
+      # All four: the stack-wide file and the three per-project ones.
+      - name: Every compose file is valid
+        run: |
+          for dir in . booking-tratvel travel-plan-admin booking-frontend; do
+            echo "--- $dir"
+            ( cd "$dir" && DB_PASSWORD=x JWT_SECRET=y docker compose config --quiet )               || { echo "::error::$dir/docker-compose.yml is not valid"; exit 1; }
+          done
+
+      # `up --wait` blocks until every service with a healthcheck reports
+      # healthy, and exits non-zero if one never does — so the assertions
+      # below only run against a stack that already came up cleanly.
+      - name: Up
+        run: docker compose up -d --build --wait
+
+      - name: API is healthy and migrated
+        run: |
+          curl -fsS http://localhost:9001/api/health | tee health.json
+          echo
+          grep -q '"database":"connected"' health.json \
+            || { echo "::error::API cannot reach the database"; exit 1; }
+          grep -q '"pendingMigrations":0' health.json \
+            || { echo "::error::migrate ran but left migrations pending"; exit 1; }
+
+      - name: Migrations ran in their own one-shot container
+        run: |
+          docker compose logs migrate | tee migrate.log
+          grep -q "Applying" migrate.log \
+            || { echo "::error::migrate container applied nothing"; exit 1; }
+
+      - name: Front ends render
+        run: |
+          curl -fsS -o /dev/null -w 'storefront %{http_code}\n' http://localhost:3001/
+          curl -fsS -o /dev/null -w 'admin      %{http_code}\n' http://localhost:3000/login
+
+      # The API address is baked in at container start, not at build time.
+      # If this regresses, one image can no longer be promoted between
+      # environments — which is the whole reason the front ends read it from
+      # the environment.
+      - name: Runtime API URL reached the browser
+        run: |
+          curl -fsS http://localhost:3001/ | grep -q 'localhost:9001/api' \
+            || { echo "::error::storefront did not pick up PUBLIC_API_URL"; exit 1; }
+          curl -fsS http://localhost:3000/login | grep -q 'localhost:9001/api' \
+            || { echo "::error::admin did not pick up PUBLIC_API_URL"; exit 1; }
+
+      # Without this a failure above tells you only which curl failed.
+      - name: Logs (on failure)
+        if: failure()
+        run: docker compose logs --no-color --tail 100
+
+      - name: Down
+        if: always()
+        run: docker compose down -v --remove-orphans
