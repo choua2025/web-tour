@@ -1,0 +1,150 @@
+# ── Travel Booking — deployed stack ─────────────────────────────────
+# The compose file that runs ON THE SERVER, for both production and the
+# per-pull-request previews. It is deliberately NOT the one in the repo root:
+#
+#   docker-compose.yml         builds from source — for your laptop
+#   deploy/…deploy.yml         pulls prebuilt images — for a server
+#
+# A server should never build. CI already built and tested these exact
+# images; rebuilding on the box would burn its CPU and, worse, could produce
+# something subtly different from what was tested.
+#
+# Everything is parameterised so one file serves every environment. The
+# workflows write a matching .env next to it and run:
+#
+#   docker compose --env-file .env -f docker-compose.deploy.yml up -d --wait
+
+name: ${STACK_NAME:?STACK_NAME must be set (e.g. travel-prod, travel-pr-42)}
+
+services:
+  # ── database ──────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-booking_system}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+    volumes:
+      # Compose prefixes this with the project name, so production and every
+      # preview keep entirely separate data. Tearing down a preview with
+      # `down -v` cannot touch the production volume.
+      - db-data:/var/lib/postgresql/data
+    # No published port on purpose. Two preview stacks would fight over 5432,
+    # and a database reachable from the internet is not something to leave on
+    # by accident. Reach it with:
+    #   docker compose exec db psql -U postgres booking_system
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-booking_system}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── schema ────────────────────────────────────────────────────────
+  # One-shot, exactly as in the other compose files: several API replicas
+  # starting together would otherwise race through the same migrations.
+  # `up` applies only what is pending, so redeploying is harmless.
+  migrate:
+    image: ${API_IMAGE:?set API_IMAGE to a pinned ghcr.io reference}
+    pull_policy: always
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-booking_system}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+    command: ["npm", "run", "migrate:up"]
+
+  # ── API ───────────────────────────────────────────────────────────
+  api:
+    image: ${API_IMAGE}
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      # The API must not start against a schema that is still moving.
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: 9001
+      HOST: 0.0.0.0
+      NODE_ENV: production
+      LOG_REQUESTS: ${LOG_REQUESTS:-false}
+
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-booking_system}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      JWT_SECRET: ${JWT_SECRET}
+
+      # Where Stripe returns the customer after checkout — the STOREFRONT.
+      FRONTEND_URL: ${FRONTEND_URL:?set FRONTEND_URL}
+
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      # Blank means the webhook trusts the request body unverified. Fine for a
+      # preview nobody points Stripe at; set it in production.
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    ports:
+      - "${API_PORT:?set API_PORT}:9001"
+
+  # ── admin console ─────────────────────────────────────────────────
+  admin:
+    image: ${ADMIN_IMAGE:?set ADMIN_IMAGE to a pinned ghcr.io reference}
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      NODE_ENV: production
+      # Read by the visitor's BROWSER, so it has to be an address the browser
+      # can resolve — never http://api:9001. This is why one image can be
+      # promoted from preview to production unchanged: the address arrives at
+      # container start, not at build time.
+      NUXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?set PUBLIC_API_URL}
+    ports:
+      - "${ADMIN_PORT:?set ADMIN_PORT}:3000"
+
+  # ── storefront ────────────────────────────────────────────────────
+  storefront:
+    image: ${STOREFRONT_IMAGE:?set STOREFRONT_IMAGE to a pinned ghcr.io reference}
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PORT: 3001
+      HOST: 0.0.0.0
+      NODE_ENV: production
+      NUXT_PUBLIC_API_BASE: ${PUBLIC_API_URL}
+      # Read by this container during SSR. In here `localhost` is the
+      # storefront itself, so the public URL above would fail and the
+      # confirmation page would render an empty receipt. On this network the
+      # API is simply `api`.
+      NUXT_API_BASE_SERVER: http://api:9001/api
+    ports:
+      - "${STOREFRONT_PORT:?set STOREFRONT_PORT}:3001"
+
+volumes:
+  db-data:

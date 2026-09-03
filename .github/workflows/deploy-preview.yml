@@ -1,0 +1,361 @@
+# ── Deploy: preview ─────────────────────────────────────────────────
+# One full, live stack per pull request — its own database, its own images,
+# its own ports on the deploy host — so a change can be clicked through
+# before it is merged. Closing the PR destroys it.
+#
+# The build workflows (API / Storefront / Admin) deliberately refuse to push
+# images from a pull request, so this builds its own, tagged `pr-<N>`. Those
+# tags are disposable and are deleted with the stack.
+#
+# Preview is NOT a small production: the database is thrown away, the mail
+# and Stripe credentials are whatever you put in the `preview` environment,
+# and nothing here should hold real customer data.
+
+name: Deploy preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - 'booking-tratvel/**'
+      - 'booking-frontend/**'
+      - 'travel-plan-admin/**'
+      - 'deploy/**'
+      - '.github/workflows/deploy-preview.yml'
+
+# One deploy per PR at a time; a new push supersedes an in-flight one, so
+# cancelling is right here in a way it is not for production.
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # ── build the three images for this PR ────────────────────────────
+  build:
+    name: Build preview images
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      api: ${{ steps.push.outputs.api }}
+      admin: ${{ steps.push.outputs.admin }}
+      storefront: ${{ steps.push.outputs.storefront }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # All three are rebuilt on every push even when only one changed. The
+      # registry cache below makes the untouched two nearly free, and the
+      # alternative — path filters deciding which to build — leaves the stack
+      # able to run a mix of tags nobody can reason about.
+      #
+      # The same cache scopes as the build workflows, so a preview build warms
+      # main's cache and vice versa.
+      - name: Build and push
+        id: push
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          set -- api:travel-booking-api:booking-tratvel \
+                 admin:travel-booking-admin:travel-plan-admin \
+                 storefront:travel-booking-storefront:booking-frontend
+
+          for spec in "$@"; do
+            svc="${spec%%:*}"; rest="${spec#*:}"
+            repo="${rest%%:*}"; ctx="${rest#*:}"
+            ref="ghcr.io/${owner}/${repo}:pr-${PR}"
+
+            echo "::group::${svc}"
+            docker buildx build "./${ctx}" \
+              --tag "$ref" \
+              --cache-from "type=gha,scope=${svc}" \
+              --cache-to "type=gha,mode=max,scope=${svc}" \
+              --push \
+              --metadata-file "meta-${svc}.json"
+            echo "::endgroup::"
+
+            # Pin what was just pushed by digest, so the deploy below cannot
+            # pick up a different build racing the same `pr-N` tag.
+            digest=$(jq -r '."containerimage.digest"' "meta-${svc}.json")
+            echo "${svc}=ghcr.io/${owner}/${repo}@${digest}" >> "$GITHUB_OUTPUT"
+          done
+
+  # ── put it on the host ────────────────────────────────────────────
+  deploy:
+    name: Deploy preview
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    environment:
+      name: preview
+      url: ${{ steps.urls.outputs.storefront }}
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every preview needs three host ports nobody else is using. Deriving
+      # them from the PR number keeps them stable across pushes — the URL in
+      # the PR comment stays valid — without any shared state to allocate
+      # from. Two PRs exactly 300 apart would collide; with 300 slots and a
+      # handful of open PRs that is not a real risk, and the second deploy
+      # would fail loudly on the bound port rather than corrupt anything.
+      - name: Work out this PR's URLs
+        id: urls
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HOST: ${{ vars.PREVIEW_HOST || secrets.DEPLOY_HOST }}
+        run: |
+          base=$(( 21000 + (PR % 300) * 3 ))
+          {
+            echo "api_port=$base"
+            echo "admin_port=$((base + 1))"
+            echo "storefront_port=$((base + 2))"
+            echo "api=http://${HOST}:${base}/api"
+            echo "admin=http://${HOST}:$((base + 1))"
+            echo "storefront=http://${HOST}:$((base + 2))"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render .env
+        env:
+          STACK_NAME: travel-pr-${{ github.event.pull_request.number }}
+          API_IMAGE: ${{ needs.build.outputs.api }}
+          ADMIN_IMAGE: ${{ needs.build.outputs.admin }}
+          STOREFRONT_IMAGE: ${{ needs.build.outputs.storefront }}
+
+          API_PORT: ${{ steps.urls.outputs.api_port }}
+          ADMIN_PORT: ${{ steps.urls.outputs.admin_port }}
+          STOREFRONT_PORT: ${{ steps.urls.outputs.storefront_port }}
+
+          PUBLIC_API_URL: ${{ steps.urls.outputs.api }}
+          FRONTEND_URL: ${{ steps.urls.outputs.storefront }}
+          # Left on in previews: when something misbehaves here, the request
+          # log is the first thing anyone asks for.
+          LOG_REQUESTS: 'true'
+
+          DB_NAME: booking_system
+          DB_USER: postgres
+          # A throwaway database that is never published off the host. The
+          # secret still has to exist so the value is not predictable.
+          DB_PASSWORD: ${{ secrets.PREVIEW_DB_PASSWORD || secrets.DB_PASSWORD }}
+          JWT_SECRET: ${{ secrets.PREVIEW_JWT_SECRET }}
+
+          MAIL_HOST: ${{ vars.MAIL_HOST || 'smtp.gmail.com' }}
+          MAIL_PORT: ${{ vars.MAIL_PORT || '587' }}
+          MAIL_USER: ${{ secrets.PREVIEW_MAIL_USER }}
+          MAIL_PASS: ${{ secrets.PREVIEW_MAIL_PASS }}
+
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.PREVIEW_CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.PREVIEW_CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.PREVIEW_CLOUDINARY_API_SECRET }}
+
+          # Test-mode keys, or blank. Never the live ones: a preview is a
+          # place where broken checkout code is expected to run.
+          STRIPE_SECRET_KEY: ${{ secrets.PREVIEW_STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ''
+        run: |
+          for required in DB_PASSWORD JWT_SECRET; do
+            if [ -z "${!required}" ]; then
+              echo "::error::${required} is empty — set PREVIEW_${required} on the preview environment (see deploy/README.md)"
+              exit 1
+            fi
+          done
+
+          umask 077
+          : > .env.render
+          for k in STACK_NAME API_IMAGE ADMIN_IMAGE STOREFRONT_IMAGE \
+                   API_PORT ADMIN_PORT STOREFRONT_PORT \
+                   PUBLIC_API_URL FRONTEND_URL LOG_REQUESTS \
+                   DB_NAME DB_USER DB_PASSWORD JWT_SECRET \
+                   MAIL_HOST MAIL_PORT MAIL_USER MAIL_PASS \
+                   CLOUDINARY_CLOUD_NAME CLOUDINARY_API_KEY CLOUDINARY_API_SECRET \
+                   STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
+            printf '%s=%s\n' "$k" "${!k}" >> .env.render
+          done
+
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ]; then
+            echo "::error::DEPLOY_SSH_KEY and DEPLOY_SSH_KNOWN_HOSTS must be set — see deploy/README.md"
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Deliberately a sibling of production, never inside it, so a
+          # mistyped path here cannot land on the production stack.
+          PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/srv/travel/previews' }}/pr-${{ github.event.pull_request.number }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" "mkdir -p '$PREVIEW_PATH'"
+
+          scp -i ~/.ssh/id_deploy -P "$PORT" \
+            deploy/docker-compose.deploy.yml deploy/remote-up.sh \
+            "$SSH_USER@$HOST:$PREVIEW_PATH/"
+          scp -i ~/.ssh/id_deploy -P "$PORT" .env.render "$SSH_USER@$HOST:$PREVIEW_PATH/.env.incoming"
+
+          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
+            "cd '$PREVIEW_PATH' && chmod +x remote-up.sh && GHCR_USER='${{ github.actor }}' GHCR_TOKEN='$GHCR_TOKEN' ./remote-up.sh"
+
+      # The same assertions production gets. A preview that is quietly broken
+      # is worse than no preview: someone reviews it, sees a blank page, and
+      # blames the change.
+      - name: Smoke-test the preview
+        env:
+          API: ${{ steps.urls.outputs.api }}
+          STOREFRONT: ${{ steps.urls.outputs.storefront }}
+          ADMIN: ${{ steps.urls.outputs.admin }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+
+          for i in $(seq 1 30); do
+            curl -fsS "$API/health" -o health.json && break
+            sleep 2
+          done
+          [ -s health.json ] || fail "$API/health never answered"
+          cat health.json; echo
+
+          grep -q '"status":"ok"' health.json          || fail "/health did not report ok"
+          grep -q '"database":"connected"' health.json || fail "the API cannot reach its database"
+          grep -q '"pendingMigrations":0' health.json  || fail "migrations are still pending"
+
+          curl -fsS -o /dev/null -w 'storefront %{http_code}\n' "$STOREFRONT/"    || fail "the storefront did not answer"
+          curl -fsS -o /dev/null -w 'admin      %{http_code}\n' "$ADMIN/login"    || fail "the admin console did not answer"
+
+          # The API address is injected at container start, not baked in at
+          # build time — that is what lets one image be promoted from preview
+          # to production. If it regresses, the front ends silently talk to
+          # localhost and the whole preview is a lie.
+          curl -fsS "$STOREFRONT/" | grep -q "${API%/api}" \
+            || fail "the storefront did not pick up PUBLIC_API_URL"
+
+      # One comment per PR, rewritten on each push, rather than a new one each
+      # time — a long-running PR would otherwise collect a dozen.
+      - name: Comment the URLs on the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "<!-- preview-deploy -->"
+            if [ "$STATUS" = "success" ]; then
+              echo "### Preview is up"
+            else
+              echo "### Preview deploy failed — the URLs below may be stale or down"
+            fi
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| storefront | ${{ steps.urls.outputs.storefront }} |"
+            echo "| admin | ${{ steps.urls.outputs.admin }} |"
+            echo "| API health | ${{ steps.urls.outputs.api }}/health |"
+            echo
+            echo "Throwaway database, test credentials. Destroyed when this PR closes."
+            echo "Commit \`${GITHUB_SHA:0:7}\`."
+          } > comment.md
+
+          gh pr comment "$PR" --body-file comment.md --edit-last --create-if-none
+
+  # ── give the host its resources back ──────────────────────────────
+  teardown:
+    name: Destroy the preview
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+
+    steps:
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          [ -n "$SSH_KEY" ] || { echo "no deploy key configured — nothing to tear down"; exit 0; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Down and delete
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
+          PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/srv/travel/previews' }}/pr-${{ github.event.pull_request.number }}
+        run: |
+          # `-v` takes the database volume with it. That is the point: it is a
+          # throwaway database, and leaving it behind fills the disk one merged
+          # PR at a time. `|| true` on the whole thing because a PR closed
+          # before its first deploy has no directory, and that is not an error.
+          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
+            "cd '$PREVIEW_PATH' 2>/dev/null && docker compose --env-file .env -f docker-compose.deploy.yml down -v --remove-orphans --rmi local; rm -rf '$PREVIEW_PATH'" || true
+
+      # The `pr-N` tags in the registry are as disposable as the stack.
+      # Best-effort: the package may not exist, and deleting the last version
+      # of a package is refused by the API.
+      - name: Delete the pr-N image tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        continue-on-error: true
+        run: |
+          for repo in travel-booking-api travel-booking-admin travel-booking-storefront; do
+            ids=$(gh api "/user/packages/container/${repo}/versions" --paginate \
+                    --jq ".[] | select(.metadata.container.tags[]? == \"pr-${PR}\") | .id" 2>/dev/null || true)
+            for id in $ids; do
+              echo "deleting ${repo} version ${id} (pr-${PR})"
+              gh api -X DELETE "/user/packages/container/${repo}/versions/${id}" || true
+            done
+          done
+
+      - name: Say so on the PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          printf '%s\n' \
+            '<!-- preview-deploy -->' \
+            '### Preview destroyed' \
+            '' \
+            'The stack and its database for this PR have been removed.' > comment.md
+          gh pr comment "$PR" --body-file comment.md --edit-last --create-if-none || true
