@@ -61,11 +61,11 @@ jobs:
 
       # All three are rebuilt on every push even when only one changed. The
       # registry cache below makes the untouched two nearly free, and the
-      # alternative — path filters deciding which to build — leaves the stack
-      # able to run a mix of tags nobody can reason about.
+      # alternative — path filters deciding which to build — leaves the
+      # stack able to run a mix of tags nobody can reason about.
       #
-      # The same cache scopes as the build workflows, so a preview build warms
-      # main's cache and vice versa.
+      # The same cache scopes as the build workflows, so a preview build
+      # warms main's cache and vice versa.
       - name: Build and push
         id: push
         env:
@@ -228,9 +228,9 @@ jobs:
           ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
             "cd '$PREVIEW_PATH' && chmod +x remote-up.sh && GHCR_USER='${{ github.actor }}' GHCR_TOKEN='$GHCR_TOKEN' ./remote-up.sh"
 
-      # The same assertions production gets. A preview that is quietly broken
-      # is worse than no preview: someone reviews it, sees a blank page, and
-      # blames the change.
+      # The same assertions production gets. A preview that is quietly
+      # broken is worse than no preview: someone reviews it, sees a blank
+      # page, and blames the change.
       - name: Smoke-test the preview
         env:
           API: ${{ steps.urls.outputs.api }}
@@ -254,14 +254,14 @@ jobs:
           curl -fsS -o /dev/null -w 'admin      %{http_code}\n' "$ADMIN/login"    || fail "the admin console did not answer"
 
           # The API address is injected at container start, not baked in at
-          # build time — that is what lets one image be promoted from preview
-          # to production. If it regresses, the front ends silently talk to
-          # localhost and the whole preview is a lie.
+          # build time — that is what lets one image be promoted from
+          # preview to production. If it regresses, the front ends silently
+          # talk to localhost and the whole preview is a lie.
           curl -fsS "$STOREFRONT/" | grep -q "${API%/api}" \
             || fail "the storefront did not pick up PUBLIC_API_URL"
 
-      # One comment per PR, rewritten on each push, rather than a new one each
-      # time — a long-running PR would otherwise collect a dozen.
+      # One comment per PR, rewritten on each push, rather than a new one
+      # each time — a long-running PR would otherwise collect a dozen.
       - name: Comment the URLs on the PR
         if: always()
         env:
@@ -323,16 +323,17 @@ jobs:
           PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
           PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/srv/travel/previews' }}/pr-${{ github.event.pull_request.number }}
         run: |
-          # `-v` takes the database volume with it. That is the point: it is a
-          # throwaway database, and leaving it behind fills the disk one merged
-          # PR at a time. `|| true` on the whole thing because a PR closed
-          # before its first deploy has no directory, and that is not an error.
+          # `-v` takes the database volume with it. That is the point: it is
+          # a throwaway database, and leaving it behind fills the disk one
+          # merged PR at a time. `|| true` on the whole thing because a PR
+          # closed before its first deploy has no directory, and that is not
+          # an error.
           ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
             "cd '$PREVIEW_PATH' 2>/dev/null && docker compose --env-file .env -f docker-compose.deploy.yml down -v --remove-orphans --rmi local; rm -rf '$PREVIEW_PATH'" || true
 
       # The `pr-N` tags in the registry are as disposable as the stack.
-      # Best-effort: the package may not exist, and deleting the last version
-      # of a package is refused by the API.
+      # Best-effort: the package may not exist, and deleting the last
+      # version of a package is refused by the API.
       - name: Delete the pr-N image tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

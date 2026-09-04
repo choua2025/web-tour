@@ -92,24 +92,26 @@ jobs:
       # The models and the migrations drifted apart once already: Booking
       # declared number_of_people and no migration ever created it. It went
       # unnoticed because the development database had been built by
-      # sequelize.sync() and had the column anyway — but a database built from
-      # these files alone did not, and every booking insert failed. This runs
-      # against exactly such a database, so the same drift cannot come back.
+      # sequelize.sync() and had the column anyway — but a database built
+      # from these files alone did not, and every booking insert failed.
+      # This runs against exactly such a database, so the same drift cannot
+      # come back unnoticed.
       - name: Models match the migrated schema
         run: npm run check:schema
 
       # The point of this step: a migration that cannot be undone is a
-      # migration you cannot roll back in production. Rolling all the way down
-      # and back up proves every `down()` works and that a clean database can
-      # be rebuilt from zero.
+      # migration you cannot roll back in production. Rolling all the way
+      # down and back up proves every down() works and that a clean database
+      # can be rebuilt from zero.
       - name: Migrations roll back and re-apply
         run: |
           npm run migrate:down -- --all --yes
           npm run migrate:up
 
-      # Booting the server imports every route, controller, model and util, so
-      # this catches syntax errors, bad imports and circular dependencies that
-      # no linter here would. Then /api/health proves it reached the database.
+      # Booting the server imports every route, controller, model and util,
+      # so this catches syntax errors, bad imports and circular dependencies
+      # that no linter here would. Then /api/health proves it reached the
+      # database.
       - name: Boot and health-check
         run: |
           node server.js & echo $! > server.pid
@@ -136,6 +138,11 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
+    # A first-time push to a package GHCR has not seen before needs the
+    # repo's default GITHUB_TOKEN permission set to "Read and write" under
+    # Settings → Actions → General → Workflow permissions. This block alone
+    # cannot escalate past a repo set to "Read only" — if the push below
+    # fails with "permission_denied: write_package", that setting is why.
     permissions:
       contents: read
       packages: write
@@ -177,8 +184,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Reuses layers from previous runs; without it every build reinstalls
-          # node_modules from scratch.
+          # Reuses layers from previous runs; without it every build
+          # reinstalls node_modules from scratch.
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 

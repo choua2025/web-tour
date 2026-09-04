@@ -1,12 +1,13 @@
 # Travel Booking — full stack for local runs and small deployments.
 #
+#   cp .env.docker.example .env    # then fill in DB_PASSWORD and JWT_SECRET
 #   docker compose up -d --build
 #
-# Ports mirror the local dev setup so nothing else has to change:
+# Ports:
 #   9001  API          3000  admin console        3001  storefront
 #
-# Secrets come from a .env file next to this one (copy .env.docker.example).
-# Nothing sensitive is written into an image.
+# Secrets come from .env next to this file. Nothing sensitive is baked into
+# an image — every value below arrives at container start.
 
 name: travel-booking
 
@@ -21,12 +22,13 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
     volumes:
       - db-data:/var/lib/postgresql/data
-    # Published so you can still point psql or a GUI at it. Drop this line to
+    # Published so psql or a GUI can still reach it directly. Drop this to
     # keep Postgres reachable only from inside the compose network.
     ports:
       - "${DB_PUBLISH_PORT:-5432}:5432"
     healthcheck:
-      # Without this the API would start before Postgres accepts connections.
+      # Without this, api/migrate would start racing Postgres before it
+      # accepts connections.
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-booking_system}"]
       interval: 5s
       timeout: 5s
@@ -34,14 +36,13 @@ services:
       start_period: 10s
 
   # ── schema ────────────────────────────────────────────────────────
-  # A one-shot job rather than something the API does at boot: several API
-  # replicas starting together would otherwise race each other through the
-  # same migrations.
+  # A one-shot job, not something the API does at boot: several API replicas
+  # starting together would otherwise race each other through the same
+  # migrations. Reuses the api image rather than declaring its own `build:`
+  # — two services building the same tag makes BuildKit collide on export.
+  # Compose builds every buildable service before starting any container, so
+  # the tag already exists by the time this one runs.
   migrate:
-    # Same image as `api`, deliberately without its own `build:` — two services
-    # building the same tag in parallel makes buildkit collide on the export.
-    # Compose builds every buildable service before starting containers, so the
-    # tag already exists by the time this one runs.
     image: travel-booking/api:${TAG:-latest}
     pull_policy: never
     restart: "no"
@@ -55,7 +56,7 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
-    # `up` applies only what is pending, so re-running compose is harmless.
+    # `up` applies only what's pending, so re-running compose is harmless.
     # On a database whose tables predate migration tracking, run
     # `docker compose run --rm migrate npm run migrate:baseline` once first.
     command: ["npm", "run", "migrate:up"]
@@ -116,8 +117,8 @@ services:
       PORT: 3000
       HOST: 0.0.0.0
       NODE_ENV: production
-      # The browser makes this call, not the container, so it must be an
-      # address the browser can reach — not http://api:9001.
+      # The visitor's BROWSER makes this call, not the container, so it must
+      # be an address the browser can resolve — never http://api:9001.
       NUXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:9001/api}
     ports:
       - "${ADMIN_PORT:-3000}:3000"
@@ -137,10 +138,10 @@ services:
       NODE_ENV: production
       # Read by the visitor's browser.
       NUXT_PUBLIC_API_BASE: ${PUBLIC_API_URL:-http://localhost:9001/api}
-      # Read by this container. The confirmation page renders its receipt
-      # during SSR, and in here `localhost` is the storefront itself — so the
-      # public URL above would fail and the receipt would come out empty.
-      # On this network the API is simply `api`.
+      # Read by THIS container. The confirmation page renders its receipt
+      # during SSR, and in here `localhost` is the storefront itself — the
+      # public URL above would fail there and the receipt would render
+      # empty. On this network the API is simply `api`.
       NUXT_API_BASE_SERVER: http://api:9001/api
     ports:
       - "${STOREFRONT_PORT:-3001}:3001"

@@ -10,12 +10,12 @@
 #   docker-compose.deploy.yml   copied from the repo on every deploy
 #   remote-up.sh                the rollout + rollback script, same
 #   .env                        rendered here from secrets, never committed
-#   .env.previous               the last good .env — the rollback
+#   .env.previous                the last good .env — the rollback
 
 name: Deploy production
 
 on:
-  # Fires after a build workflow finishes on the default branch. `workflow_run`
+  # Fires after a build workflow finishes on the default branch. workflow_run
   # also fires on failure, so the job below checks the conclusion first.
   workflow_run:
     workflows: [API, Storefront, Admin]
@@ -48,9 +48,9 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
 
-    # Hang required reviewers, the deployment URL and the production secrets
-    # off this in Settings → Environments. Without it, any green build on main
-    # goes straight to production unattended.
+    # Hang required reviewers, the deployment URL and the production
+    # secrets off this in Settings → Environments. Without it, any green
+    # build on main goes straight to production unattended.
     environment:
       name: production
       url: ${{ vars.PRODUCTION_URL }}
@@ -74,11 +74,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # `latest` is a moving target: it can point somewhere else five minutes
-      # from now, so a server told to run `latest` cannot say what it is
-      # running and cannot be rolled back to it. Resolving to a digest here
-      # freezes the release, and makes the saved .env a complete, replayable
-      # description of it.
+      # `latest` is a moving target: it can point somewhere else five
+      # minutes from now, so a server told to run `latest` cannot say what
+      # it is running and cannot be rolled back to it. Resolving to a digest
+      # here freezes the release, and makes the saved .env a complete,
+      # replayable description of it.
       - name: Resolve tags to digests
         id: images
         run: |
@@ -97,7 +97,7 @@ jobs:
           done
 
       # Values arrive through `env:` and are written with printf rather than
-      # pasted into the script text, so a password containing a quote, a `$`
+      # pasted into the script text, so a password containing a quote, a $
       # or a backtick cannot break the file or get executed.
       - name: Render .env
         env:
@@ -165,9 +165,9 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
 
-          # Pinned host keys, not StrictHostKeyChecking=no. With the check off,
-          # anything that answers on that address collects the deploy key and
-          # every secret in the .env below.
+          # Pinned host keys, not StrictHostKeyChecking=no. With the check
+          # off, anything that answers on that address collects the deploy
+          # key and every secret in the .env below.
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
@@ -184,8 +184,8 @@ jobs:
             "$SSH_USER@$HOST:$DEPLOY_PATH/"
 
           # The .env lands under a temp name and remote-up.sh moves it into
-          # place, so an interrupted transfer leaves the previous working .env
-          # untouched instead of a half-written one.
+          # place, so an interrupted transfer leaves the previous working
+          # .env untouched instead of a half-written one.
           scp -i ~/.ssh/id_deploy -P "$PORT" .env.render "$SSH_USER@$HOST:$DEPLOY_PATH/.env.incoming"
 
       - name: Deploy
@@ -198,9 +198,10 @@ jobs:
           ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
             "cd '$DEPLOY_PATH' && chmod +x remote-up.sh && GHCR_USER='${{ github.actor }}' GHCR_TOKEN='$GHCR_TOKEN' ./remote-up.sh"
 
-      # Healthy containers are not the same as a working site: the API can be
-      # up while unable to reach its database, and a front end can render
-      # while pointing at the wrong API. These hit the real public URLs.
+      # Healthy containers are not the same as a working site: the API can
+      # be up while unable to reach its database, and a front end can
+      # render while pointing at the wrong API. These hit the real public
+      # URLs.
       - name: Smoke-test production
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
@@ -219,8 +220,9 @@ jobs:
 
           grep -q '"status":"ok"' health.json          || fail "/health did not report ok"
           grep -q '"database":"connected"' health.json || fail "the API cannot reach its database"
-          # The migrate container already ran, so nothing should be left. If
-          # this trips, a migration failed and the schema is behind the code.
+          # The migrate container already ran, so nothing should be left.
+          # If this trips, a migration failed and the schema is behind the
+          # code.
           grep -q '"pendingMigrations":0' health.json  || fail "migrations are still pending after deploy"
 
           if [ -n "$STOREFRONT_URL" ]; then

@@ -45,8 +45,8 @@ jobs:
       # --ignore-scripts skips the `nuxt prepare` postinstall so the failure
       # you see is an install failure, not a confusing prepare failure.
       # `npm ci` also rejects a package-lock.json that has drifted from
-      # package.json, which is the single most common reason the Docker build
-      # breaks while a local `npm run dev` still works.
+      # package.json, which is the single most common reason the Docker
+      # build breaks while a local `npm run dev` still works.
       - name: Install
         run: npm ci --ignore-scripts
 
@@ -76,6 +76,9 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
+    # A first-time push needs the repo's default GITHUB_TOKEN permission set
+    # to "Read and write" under Settings → Actions → General → Workflow
+    # permissions — this block cannot escalate past a repo set to read-only.
     permissions:
       contents: read
       packages: write

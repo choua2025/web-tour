@@ -1,4 +1,4 @@
-# ── Admin console (travel-plan-admin, Nuxt 4) ───────────────────────────
+# ── Admin console (travel-plan-admin, Nuxt 4) ───────────────────────
 # Runs only when the admin console changes.
 
 name: Admin
@@ -42,12 +42,12 @@ jobs:
           cache: npm
           cache-dependency-path: travel-plan-admin/package-lock.json
 
-      # --ignore-scripts skips this project's postinstall (`nuxt prepare` plus
-      # the sourcemap strip) so the failure you see is an install failure, not
-      # a confusing one from a script that needs the source tree present.
-      # `npm ci` also rejects a package-lock.json that has drifted from
-      # package.json, which is the single most common reason the Docker build
-      # breaks while a local `npm run dev` still works.
+      # --ignore-scripts skips this project's postinstall (`nuxt prepare`
+      # plus the sourcemap strip) so the failure you see is an install
+      # failure, not a confusing one from a script that needs the source
+      # tree present. `npm ci` also rejects a package-lock.json that has
+      # drifted from package.json, which is the single most common reason
+      # the Docker build breaks while a local `npm run dev` still works.
       - name: Install
         run: npm ci --ignore-scripts
 
@@ -83,6 +83,9 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
+    # A first-time push needs the repo's default GITHUB_TOKEN permission set
+    # to "Read and write" under Settings → Actions → General → Workflow
+    # permissions — this block cannot escalate past a repo set to read-only.
     permissions:
       contents: read
       packages: write

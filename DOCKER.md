@@ -8,8 +8,8 @@ Three projects, three images, one compose file.
 | `travel-plan-admin` (admin console) | `travel-booking/admin` | 3000 | [travel-plan-admin/Dockerfile](travel-plan-admin/Dockerfile) |
 | `booking-frontend` (storefront) | `travel-booking/storefront` | 3001 | [booking-frontend/Dockerfile](booking-frontend/Dockerfile) |
 
-Each Dockerfile stands alone — you can build any project without the other
-two, and without this compose file.
+Each Dockerfile stands alone — build any project without the other two, and
+without this compose file.
 
 ## Four compose files
 
@@ -27,8 +27,8 @@ Each has its own `.env.docker.example` beside it, listing only the variables
 that file actually reads.
 
 **Do not run the root file and a project file at the same time** — they
-publish the same ports, and each keeps its own database volume, so they would
-not even share data.
+publish the same ports, and each keeps its own database volume, so they
+would not even share data.
 
 ## Run everything
 
@@ -137,25 +137,61 @@ does not rebuild the API.
 | [api.yml](.github/workflows/api.yml) | `booking-tratvel/**` | Migrates a real Postgres, rolls all the way back and re-applies, boots the server and checks `/api/health`, then pushes the image |
 | [admin.yml](.github/workflows/admin.yml) | `travel-plan-admin/**` | `nuxt build`, then pushes the image |
 | [storefront.yml](.github/workflows/storefront.yml) | `booking-frontend/**` | `nuxt build`, then pushes the image |
-| [stack.yml](.github/workflows/stack.yml) | `docker-compose.yml` | Brings the whole stack up and checks every service answers |
+| [stack.yml](.github/workflows/stack.yml) | any `docker-compose.yml` | Brings the whole stack up and checks every service answers |
+| [deploy-preview.yml](.github/workflows/deploy-preview.yml) | a pull request touching app code | Builds `pr-<N>` images, deploys a full standalone stack, comments the URLs on the PR, tears it down on close |
+| [deploy-production.yml](.github/workflows/deploy-production.yml) | API/Storefront/Admin succeeding on `main` | Pins `latest` to digests, rolls them onto the server, rolls back automatically if the new release doesn't come up healthy |
 
 The API workflow builds its Postgres from the migration files and nothing
-else, which is what makes two of its steps worth the time.
+else, which is what makes two of its steps worth the time:
 
-Pull requests get the verify job only — publishing from a PR would let a fork
-overwrite your images. Images go to GHCR as
+- **`npm run check:schema`** compares every model column against the schema
+  the migrations actually built. The two drifted once: `Booking` declared
+  `number_of_people` and no migration ever created it. Nobody noticed,
+  because the development database predated migrations — it had been built
+  by `sequelize.sync()`, so the column was there. A database built from the
+  migration files alone was missing it, and every booking insert failed. A
+  fresh deployment could not have taken a single booking.
+- **Rolling every migration back and re-applying it** catches the other
+  half: a migration whose `down()` does not work is one you cannot roll back
+  in production, and that only shows up at the moment you need it.
+
+Pull requests get the `verify`/build job only — publishing from a PR would
+let a fork overwrite your images. Images go to GHCR as
 `ghcr.io/<owner>/travel-booking-{api,admin,storefront}`, tagged `latest` on
 the default branch plus the full commit SHA. Authentication uses the built-in
-`GITHUB_TOKEN`; there is nothing to configure.
+`GITHUB_TOKEN`; there is nothing to configure in the workflow files
+themselves — but see the next section, which is a one-time repo setting.
 
-`npm run check:schema` compares every model column against the schema the
-migrations actually built. The two drifted once: `Booking` declared
-`number_of_people` and no migration ever created it. Nobody noticed, because
-the development database predated migrations — it had been built by
-`sequelize.sync()`, so the column was there. A database built from the
-migration files alone was missing it, and every booking insert failed. A
-fresh deployment could not have taken a single booking.
+### First-time GHCR push: one required repo setting
 
-Rolling every migration back and re-applying it catches the other half: a
-migration whose `down()` does not work is one you cannot roll back in
-production, and that only shows up at the moment you need it.
+The very first time any build workflow tries to push an image, GHCR can
+refuse it with:
+
+```
+ERROR: failed to push ghcr.io/<owner>/travel-booking-api:main: denied: permission_denied: write_package
+```
+
+Every `image` job already declares `permissions: packages: write`, but that
+block can only *restrict* what the repo already allows — it cannot escalate
+past the repository's own default. Fix it once, in the GitHub UI (not in any
+file here):
+
+**Settings → Actions → General → Workflow permissions → "Read and write
+permissions" → Save.**
+
+If a push still fails after that, the package likely already exists under a
+different owner/link — check **your profile → Packages → (the package) →
+Package settings → Manage Actions access** and grant this repo write access.
+
+### Deploying beyond CI
+
+`deploy-preview.yml` and `deploy-production.yml` both roll onto a server over
+SSH, using [deploy/docker-compose.deploy.yml](deploy/docker-compose.deploy.yml)
+(pulls pinned-digest images, never builds) and
+[deploy/remote-up.sh](deploy/remote-up.sh) (swaps `.env`, pulls, brings the
+stack up with `--wait`, and rolls back to the previous `.env` automatically
+if the new release doesn't come up healthy). Both need, at minimum,
+`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_SSH_KNOWN_HOSTS`,
+`DB_PASSWORD`, and `JWT_SECRET` set as repository or environment secrets —
+production deploys are gated behind a `production` GitHub Environment so
+they don't run unattended on every green build.

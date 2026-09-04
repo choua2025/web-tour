@@ -1,7 +1,7 @@
 # ── Whole stack ─────────────────────────────────────────────────────
 # The three project workflows each build one image. This one checks the
-# pieces still fit together: compose parses, and the images it names start
-# and answer. It runs on changes to compose itself, or on demand.
+# pieces still fit together: every compose file parses, and the images it
+# names start and answer. Runs on changes to compose itself, or on demand.
 
 name: Stack
 
@@ -49,13 +49,14 @@ jobs:
           LOG_REQUESTS=false
           ENVEOF
 
-      # Catches a typo or an undefined variable before anything is built.
-      # All four: the stack-wide file and the three per-project ones.
+      # Catches a typo or an undefined variable before anything is built —
+      # the stack-wide file and the three per-project ones.
       - name: Every compose file is valid
         run: |
           for dir in . booking-tratvel travel-plan-admin booking-frontend; do
             echo "--- $dir"
-            ( cd "$dir" && DB_PASSWORD=x JWT_SECRET=y docker compose config --quiet )               || { echo "::error::$dir/docker-compose.yml is not valid"; exit 1; }
+            ( cd "$dir" && DB_PASSWORD=x JWT_SECRET=y docker compose config --quiet ) \
+              || { echo "::error::$dir/docker-compose.yml is not valid"; exit 1; }
           done
 
       # `up --wait` blocks until every service with a healthcheck reports
@@ -86,8 +87,8 @@ jobs:
 
       # The API address is baked in at container start, not at build time.
       # If this regresses, one image can no longer be promoted between
-      # environments — which is the whole reason the front ends read it from
-      # the environment.
+      # environments — the whole reason the front ends read it from the
+      # environment.
       - name: Runtime API URL reached the browser
         run: |
           curl -fsS http://localhost:3001/ | grep -q 'localhost:9001/api' \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ── The half that runs ON THE SERVER ────────────────────────────────
 # Uploaded and executed by the deploy workflows. It lives in the repo rather
-# than inline in the YAML so it can be read, reviewed and run by hand:
+# than inline in the YAML so it can be read, reviewed, and run by hand:
 #
 #   cd /srv/travel/production && ./remote-up.sh
 #
@@ -22,14 +22,14 @@ compose() {
 
 [ -f .env.incoming ] || { echo "no .env.incoming here — nothing to deploy" >&2; exit 1; }
 
-# The images are private to the repository unless the packages were made
-# public, so the server needs its own registry login. GHCR_TOKEN arrives
-# through the environment and is never written to disk here.
+# Images are private to the repository unless the packages were made public,
+# so the server needs its own registry login. GHCR_TOKEN arrives through the
+# environment and is never written to disk here.
 if [ -n "${GHCR_TOKEN:-}" ]; then
     echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER:?GHCR_USER not set}" --password-stdin
 fi
 
-# Keep the last good .env before overwriting it. This file IS the rollback:
+# Keep the last-good .env before overwriting it. This file IS the rollback:
 # it names the exact image digests that were serving traffic a minute ago.
 if [ -f .env ]; then
     cp .env .env.previous
