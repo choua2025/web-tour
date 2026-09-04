@@ -32,7 +32,7 @@ router.get('/', async (_req, res) => {
 
     return res.json({
         status: 'ok',
-        database: 'connected and reachable',
+        database: 'connected and reachable successfully',
         // Surfaced rather than failed on: a rolling deploy legitimately runs
         // with the new image before the migration job has finished.
         pendingMigrations: pending.length,
