@@ -26,6 +26,6 @@ router.use('/payments', paymentRoutes);
 router.use('/reviews', reviewRoutes);
 router.use('/contact', contactRoutes);
 router.use('/events', eventRoutes);
-router.use('/', healthRoutes);
+router.use('/health', healthRoutes);
 
 export default router;

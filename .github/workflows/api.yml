@@ -61,7 +61,7 @@ jobs:
       PORT: 9001
       HOST: 127.0.0.1
       LOG_REQUESTS: 'false'
-
+=
     steps:
       - uses: actions/checkout@v4
 
