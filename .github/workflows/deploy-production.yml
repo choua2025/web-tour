@@ -1,12 +1,18 @@
 # ── Deploy: production ──────────────────────────────────────────────
 # The CD half. API / Storefront / Admin each build, test and publish one
 # image; this takes the three that are current on the default branch, pins
-# them to their digests, and rolls them onto the server.
+# them to their digests, and rolls them onto the deploy target.
 #
 # It never builds anything. If an image is missing, this stops rather than
 # shipping a stale mixture of releases.
 #
-# What lives on the server (DEPLOY_PATH):
+# Runs on a self-hosted runner living on the user's own WSL Ubuntu machine
+# — no inbound access, SSH key or password involved. The runner reaches out
+# to GitHub for the job and does everything in its own shell, which already
+# IS the deploy target, so this is a normal `docker compose` rollout with no
+# network transport in the middle.
+#
+# What lives at DEPLOY_PATH on the runner:
 #   docker-compose.deploy.yml   copied from the repo on every deploy
 #   remote-up.sh                the rollout + rollback script, same
 #   .env                        rendered here from secrets, never committed
@@ -15,19 +21,14 @@
 name: Deploy production
 
 on:
-  # Manual only, for now: there is no production server configured yet, so
-  # firing this automatically would just fail on every push to main. See
-  # deploy/README.md for the full checklist (a reachable DEPLOY_HOST,
-  # DEPLOY_SSH_KEY, DB_PASSWORD, JWT_SECRET, ... on the `production`
-  # environment). Once that's done, restore automatic deploys by adding:
-  #
-  #   workflow_run:
-  #     workflows: [API, Storefront, Admin]
-  #     types: [completed]
-  #     branches: [main, master]
-  #
-  # back under `on:` — the job's `environment: production` gate and the
-  # smoke test below don't need to change.
+  # Fires after a build workflow finishes on the default branch. workflow_run
+  # also fires on failure, so the job below checks the conclusion first.
+  workflow_run:
+    workflows: [API, Storefront, Admin]
+    types: [completed]
+    branches: [main, master]
+
+  # Redeploy, or pin a specific tag, without pushing a commit.
   workflow_dispatch:
     inputs:
       tag:
@@ -36,7 +37,7 @@ on:
         default: latest
 
 # Deploys queue rather than cancel: interrupting one halfway would leave the
-# server running containers from two different releases.
+# runner's Docker running containers from two different releases.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
@@ -44,8 +45,14 @@ concurrency:
 jobs:
   deploy:
     name: Roll out to production
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, wsl-ubuntu]
     timeout-minutes: 20
+
+    # Skip the runs where the build failed. A manual dispatch carries no
+    # workflow_run context, so it always passes this.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
 
     # Hang required reviewers, the deployment URL and the production
     # secrets off this in Settings → Environments. Without it, any green
@@ -61,10 +68,20 @@ jobs:
     env:
       TAG: ${{ inputs.tag || 'latest' }}
       STACK_NAME: travel-prod
-      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/srv/travel/production' }}
 
     steps:
       - uses: actions/checkout@v4
+
+      # Resolved in the runner's own shell rather than the YAML `${{ }}`
+      # expression above — a literal '$HOME' baked into that expression
+      # would never get expanded, since GitHub Actions evaluates `${{ }}`
+      # before any shell sees the value.
+      - name: Resolve the deploy path
+        run: echo "DEPLOY_PATH=${DEPLOY_PATH:-$HOME/travel/production}" >> "$GITHUB_ENV"
+        env:
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+
+      - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -74,8 +91,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # `latest` is a moving target: it can point somewhere else five
-      # minutes from now, so a server told to run `latest` cannot say what
-      # it is running and cannot be rolled back to it. Resolving to a digest
+      # minutes from now, so a run told to deploy `latest` cannot say what
+      # it deployed and cannot be rolled back to it. Resolving to a digest
       # here freezes the release, and makes the saved .env a complete,
       # replayable description of it.
       - name: Resolve tags to digests
@@ -97,7 +114,9 @@ jobs:
 
       # Values arrive through `env:` and are written with printf rather than
       # pasted into the script text, so a password containing a quote, a $
-      # or a backtick cannot break the file or get executed.
+      # or a backtick cannot break the file or get executed. Written
+      # straight to DEPLOY_PATH — no transfer step, this shell already runs
+      # on the deploy target.
       - name: Render .env
         env:
           API_IMAGE: ${{ steps.images.outputs.api_image }}
@@ -138,8 +157,9 @@ jobs:
             fi
           done
 
+          mkdir -p "$DEPLOY_PATH"
           umask 077
-          : > .env.render
+          : > "$DEPLOY_PATH/.env.incoming"
           for k in STACK_NAME API_IMAGE ADMIN_IMAGE STOREFRONT_IMAGE \
                    API_PORT ADMIN_PORT STOREFRONT_PORT \
                    PUBLIC_API_URL FRONTEND_URL LOG_REQUESTS \
@@ -147,60 +167,26 @@ jobs:
                    MAIL_HOST MAIL_PORT MAIL_USER MAIL_PASS \
                    CLOUDINARY_CLOUD_NAME CLOUDINARY_API_KEY CLOUDINARY_API_SECRET \
                    STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
-            printf '%s=%s\n' "$k" "${!k}" >> .env.render
+            printf '%s=%s\n' "$k" "${!k}" >> "$DEPLOY_PATH/.env.incoming"
           done
 
-      - name: Set up SSH
-        env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
-        run: |
-          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ]; then
-            echo "::error::DEPLOY_SSH_KEY and DEPLOY_SSH_KNOWN_HOSTS must be set — see deploy/README.md"
-            exit 1
-          fi
-
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-
-          # Pinned host keys, not StrictHostKeyChecking=no. With the check
-          # off, anything that answers on that address collects the deploy
-          # key and every secret in the .env below.
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Upload the release
-        env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          SSH_USER: ${{ secrets.DEPLOY_USER }}
-          PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
-        run: |
-          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" "mkdir -p '$DEPLOY_PATH'"
-
-          scp -i ~/.ssh/id_deploy -P "$PORT" \
-            deploy/docker-compose.deploy.yml deploy/remote-up.sh \
-            "$SSH_USER@$HOST:$DEPLOY_PATH/"
-
-          # The .env lands under a temp name and remote-up.sh moves it into
-          # place, so an interrupted transfer leaves the previous working
-          # .env untouched instead of a half-written one.
-          scp -i ~/.ssh/id_deploy -P "$PORT" .env.render "$SSH_USER@$HOST:$DEPLOY_PATH/.env.incoming"
+      - name: Place the compose file and rollout script
+        run: cp deploy/docker-compose.deploy.yml deploy/remote-up.sh "$DEPLOY_PATH/"
 
       - name: Deploy
         env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          SSH_USER: ${{ secrets.DEPLOY_USER }}
-          PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         run: |
-          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
-            "cd '$DEPLOY_PATH' && chmod +x remote-up.sh && GHCR_USER='${{ github.actor }}' GHCR_TOKEN='$GHCR_TOKEN' ./remote-up.sh"
+          cd "$DEPLOY_PATH"
+          chmod +x remote-up.sh
+          ./remote-up.sh
 
       # Healthy containers are not the same as a working site: the API can
       # be up while unable to reach its database, and a front end can
-      # render while pointing at the wrong API. These hit the real public
-      # URLs.
+      # render while pointing at the wrong API. These hit the real URLs —
+      # `localhost` is valid here since this shell runs on the same machine
+      # that's now serving the stack.
       - name: Smoke-test production
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
@@ -209,7 +195,7 @@ jobs:
         run: |
           fail() { echo "::error::$1"; exit 1; }
 
-          # A rollout takes a moment to settle behind a proxy; give it one.
+          # A rollout takes a moment to settle; give it one.
           for i in $(seq 1 30); do
             curl -fsS "$PUBLIC_API_URL/health" -o health.json && break
             sleep 2
@@ -240,6 +226,7 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| tag | \`${TAG}\` |"
+            echo "| deploy path | \`${DEPLOY_PATH}\` |"
             echo "| api | \`${{ steps.images.outputs.api_image }}\` |"
             echo "| admin | \`${{ steps.images.outputs.admin_image }}\` |"
             echo "| storefront | \`${{ steps.images.outputs.storefront_image }}\` |"

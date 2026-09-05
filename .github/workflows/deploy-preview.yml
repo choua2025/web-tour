@@ -1,11 +1,16 @@
 # ── Deploy: preview ─────────────────────────────────────────────────
 # One full, live stack per pull request — its own database, its own images,
-# its own ports on the deploy host — so a change can be clicked through
-# before it is merged. Closing the PR destroys it.
+# its own ports — so a change can be clicked through before it is merged.
+# Closing the PR destroys it.
 #
 # The build workflows (API / Storefront / Admin) deliberately refuse to push
 # images from a pull request, so this builds its own, tagged `pr-<N>`. Those
 # tags are disposable and are deleted with the stack.
+#
+# The `deploy` and `teardown` jobs run on a self-hosted runner living on the
+# user's own WSL Ubuntu machine — no inbound access, SSH key or password
+# involved. Several PR stacks can live there at once, each in its own
+# directory under PREVIEW_ROOT with its own three ports.
 #
 # Preview is NOT a small production: the database is thrown away, the mail
 # and Stripe credentials are whatever you put in the `preview` environment,
@@ -31,6 +36,9 @@ concurrency:
 
 jobs:
   # ── build the three images for this PR ────────────────────────────
+  # Stays on a GitHub-hosted runner on purpose: there's no reason to tie
+  # image builds to the self-hosted runner's own disk and CPU when the
+  # registry cache makes this nearly free either way.
   build:
     name: Build preview images
     if: >-
@@ -96,11 +104,11 @@ jobs:
             echo "${svc}=ghcr.io/${owner}/${repo}@${digest}" >> "$GITHUB_OUTPUT"
           done
 
-  # ── put it on the host ────────────────────────────────────────────
+  # ── put it on the runner ───────────────────────────────────────────
   deploy:
     name: Deploy preview
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, wsl-ubuntu]
     timeout-minutes: 20
 
     environment:
@@ -114,18 +122,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Every preview needs three host ports nobody else is using. Deriving
-      # them from the PR number keeps them stable across pushes — the URL in
-      # the PR comment stays valid — without any shared state to allocate
-      # from. Two PRs exactly 300 apart would collide; with 300 slots and a
-      # handful of open PRs that is not a real risk, and the second deploy
-      # would fail loudly on the bound port rather than corrupt anything.
+      # Every preview needs three ports nobody else on the runner is using.
+      # Deriving them from the PR number keeps them stable across pushes —
+      # the URL in the PR comment stays valid — without any shared state to
+      # allocate from. Two PRs exactly 300 apart would collide; with 300
+      # slots and a handful of open PRs that is not a real risk, and the
+      # second deploy would fail loudly on the bound port rather than
+      # corrupt anything.
       - name: Work out this PR's URLs
         id: urls
         env:
           PR: ${{ github.event.pull_request.number }}
-          HOST: ${{ vars.PREVIEW_HOST || secrets.DEPLOY_HOST }}
+          HOST: ${{ vars.PREVIEW_HOST }}
         run: |
+          if [ -z "$HOST" ]; then
+            echo "::error::PREVIEW_HOST is empty — set it on the preview environment (see deploy/README.md). For the runner's own WSL2 machine, 'localhost' usually works from Windows."
+            exit 1
+          fi
+
           base=$(( 21000 + (PR % 300) * 3 ))
           {
             echo "api_port=$base"
@@ -135,6 +149,18 @@ jobs:
             echo "admin=http://${HOST}:$((base + 1))"
             echo "storefront=http://${HOST}:$((base + 2))"
           } >> "$GITHUB_OUTPUT"
+
+      # Resolved in the runner's own shell, not the YAML `${{ }}` expression
+      # — a literal '$HOME' baked into that expression would never get
+      # expanded there. A sibling of the production path, never inside it,
+      # so a mistyped PR number here cannot land on the production stack.
+      - name: Resolve the preview path
+        env:
+          PREVIEW_ROOT: ${{ vars.PREVIEW_ROOT }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          root="${PREVIEW_ROOT:-$HOME/travel/previews}"
+          echo "PREVIEW_PATH=${root}/pr-${PR}" >> "$GITHUB_ENV"
 
       - name: Render .env
         env:
@@ -155,8 +181,8 @@ jobs:
 
           DB_NAME: booking_system
           DB_USER: postgres
-          # A throwaway database that is never published off the host. The
-          # secret still has to exist so the value is not predictable.
+          # A throwaway database that never leaves the runner. The secret
+          # still has to exist so the value is not predictable.
           DB_PASSWORD: ${{ secrets.PREVIEW_DB_PASSWORD || secrets.DB_PASSWORD }}
           JWT_SECRET: ${{ secrets.PREVIEW_JWT_SECRET }}
 
@@ -181,8 +207,9 @@ jobs:
             fi
           done
 
+          mkdir -p "$PREVIEW_PATH"
           umask 077
-          : > .env.render
+          : > "$PREVIEW_PATH/.env.incoming"
           for k in STACK_NAME API_IMAGE ADMIN_IMAGE STOREFRONT_IMAGE \
                    API_PORT ADMIN_PORT STOREFRONT_PORT \
                    PUBLIC_API_URL FRONTEND_URL LOG_REQUESTS \
@@ -190,43 +217,20 @@ jobs:
                    MAIL_HOST MAIL_PORT MAIL_USER MAIL_PASS \
                    CLOUDINARY_CLOUD_NAME CLOUDINARY_API_KEY CLOUDINARY_API_SECRET \
                    STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
-            printf '%s=%s\n' "$k" "${!k}" >> .env.render
+            printf '%s=%s\n' "$k" "${!k}" >> "$PREVIEW_PATH/.env.incoming"
           done
 
-      - name: Set up SSH
-        env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
-        run: |
-          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ]; then
-            echo "::error::DEPLOY_SSH_KEY and DEPLOY_SSH_KNOWN_HOSTS must be set — see deploy/README.md"
-            exit 1
-          fi
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+      - name: Place the compose file and rollout script
+        run: cp deploy/docker-compose.deploy.yml deploy/remote-up.sh "$PREVIEW_PATH/"
 
       - name: Deploy
         env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          SSH_USER: ${{ secrets.DEPLOY_USER }}
-          PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Deliberately a sibling of production, never inside it, so a
-          # mistyped path here cannot land on the production stack.
-          PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/srv/travel/previews' }}/pr-${{ github.event.pull_request.number }}
+          GHCR_USER: ${{ github.actor }}
         run: |
-          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" "mkdir -p '$PREVIEW_PATH'"
-
-          scp -i ~/.ssh/id_deploy -P "$PORT" \
-            deploy/docker-compose.deploy.yml deploy/remote-up.sh \
-            "$SSH_USER@$HOST:$PREVIEW_PATH/"
-          scp -i ~/.ssh/id_deploy -P "$PORT" .env.render "$SSH_USER@$HOST:$PREVIEW_PATH/.env.incoming"
-
-          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
-            "cd '$PREVIEW_PATH' && chmod +x remote-up.sh && GHCR_USER='${{ github.actor }}' GHCR_TOKEN='$GHCR_TOKEN' ./remote-up.sh"
+          cd "$PREVIEW_PATH"
+          chmod +x remote-up.sh
+          ./remote-up.sh
 
       # The same assertions production gets. A preview that is quietly
       # broken is worse than no preview: someone reviews it, sees a blank
@@ -262,6 +266,8 @@ jobs:
 
       # One comment per PR, rewritten on each push, rather than a new one
       # each time — a long-running PR would otherwise collect a dozen.
+      # Needs the `gh` CLI on the runner (present on GitHub-hosted runners
+      # by default; install it on the self-hosted one if it's missing).
       - name: Comment the URLs on the PR
         if: always()
         env:
@@ -289,13 +295,13 @@ jobs:
 
           gh pr comment "$PR" --body-file comment.md --edit-last --create-if-none
 
-  # ── give the host its resources back ──────────────────────────────
+  # ── give the runner its resources back ─────────────────────────────
   teardown:
     name: Destroy the preview
     if: >-
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, wsl-ubuntu]
     timeout-minutes: 10
 
     permissions:
@@ -304,32 +310,22 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Set up SSH
+      - name: Resolve the preview path
         env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+          PREVIEW_ROOT: ${{ vars.PREVIEW_ROOT }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
-          [ -n "$SSH_KEY" ] || { echo "no deploy key configured — nothing to tear down"; exit 0; }
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          root="${PREVIEW_ROOT:-$HOME/travel/previews}"
+          echo "PREVIEW_PATH=${root}/pr-${PR}" >> "$GITHUB_ENV"
 
       - name: Down and delete
-        env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          SSH_USER: ${{ secrets.DEPLOY_USER }}
-          PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
-          PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/srv/travel/previews' }}/pr-${{ github.event.pull_request.number }}
         run: |
           # `-v` takes the database volume with it. That is the point: it is
           # a throwaway database, and leaving it behind fills the disk one
           # merged PR at a time. `|| true` on the whole thing because a PR
           # closed before its first deploy has no directory, and that is not
           # an error.
-          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
-            "cd '$PREVIEW_PATH' 2>/dev/null && docker compose --env-file .env -f docker-compose.deploy.yml down -v --remove-orphans --rmi local; rm -rf '$PREVIEW_PATH'" || true
+          (cd "$PREVIEW_PATH" 2>/dev/null && docker compose --env-file .env -f docker-compose.deploy.yml down -v --remove-orphans --rmi local; rm -rf "$PREVIEW_PATH") || true
 
       # The `pr-N` tags in the registry are as disposable as the stack.
       # Best-effort: the package may not exist, and deleting the last

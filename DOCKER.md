@@ -139,7 +139,7 @@ does not rebuild the API.
 | [storefront.yml](.github/workflows/storefront.yml) | `booking-frontend/**` | `nuxt build`, then pushes the image |
 | [stack.yml](.github/workflows/stack.yml) | any `docker-compose.yml` | Brings the whole stack up and checks every service answers |
 | [deploy-preview.yml](.github/workflows/deploy-preview.yml) | a pull request touching app code | Builds `pr-<N>` images, deploys a full standalone stack, comments the URLs on the PR, tears it down on close |
-| [deploy-production.yml](.github/workflows/deploy-production.yml) | manually (Actions tab → Run workflow) — see below | Pins `latest` to digests, rolls them onto the server, rolls back automatically if the new release doesn't come up healthy |
+| [deploy-production.yml](.github/workflows/deploy-production.yml) | API/Storefront/Admin succeeding on `main` | Pins `latest` to digests, rolls them onto the runner, rolls back automatically if the new release doesn't come up healthy |
 
 The API workflow builds its Postgres from the migration files and nothing
 else, which is what makes two of its steps worth the time:
@@ -185,19 +185,22 @@ Package settings → Manage Actions access** and grant this repo write access.
 
 ### Deploying beyond CI
 
-`deploy-preview.yml` and `deploy-production.yml` both roll onto a server over
-SSH, using [deploy/docker-compose.deploy.yml](deploy/docker-compose.deploy.yml)
-(pulls pinned-digest images, never builds) and
+`deploy-preview.yml` and `deploy-production.yml` both deploy to a
+**self-hosted GitHub Actions runner** — the user's own WSL Ubuntu machine,
+labeled `[self-hosted, linux, wsl-ubuntu]`. No inbound access, SSH key, or
+password is involved: the runner reaches out to GitHub for the job and does
+everything in its own shell, which already IS the deploy target. Both use
+[deploy/docker-compose.deploy.yml](deploy/docker-compose.deploy.yml) (pulls
+pinned-digest images, never builds) and
 [deploy/remote-up.sh](deploy/remote-up.sh) (swaps `.env`, pulls, brings the
-stack up with `--wait`, and rolls back to the previous `.env` automatically
-if the new release doesn't come up healthy). See
+stack up with `--wait`, and rolls back automatically if the new release
+doesn't come up healthy) — that script doesn't care whether it was placed
+there by a local `cp` or an `scp` over SSH, so pointing this at a real
+remote server later needs no change to it. See
 [deploy/README.md](deploy/README.md) for the full list of secrets and
-variables each one needs, and a first-deploy checklist.
+variables each one needs, the runner's own prerequisites (Docker, buildx,
+curl, `gh`), and a first-deploy checklist.
 
-**`deploy-production.yml` currently fires by manual dispatch only** — there
-is no production server configured yet, and firing it automatically would
-just fail on every push to main. The workflow file has a comment showing
-exactly what to add back to `on:` once the server and its secrets exist.
-Production deploys are also gated behind a `production` GitHub Environment,
-so once auto-deploy is restored it still won't run unattended unless that
-environment is left without required reviewers.
+Production deploys are gated behind a `production` GitHub Environment, so a
+green build on main still won't reach the runner unattended if that
+environment is configured with required reviewers.

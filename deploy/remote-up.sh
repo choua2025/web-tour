@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# ── The half that runs ON THE SERVER ────────────────────────────────
-# Uploaded and executed by the deploy workflows. It lives in the repo rather
-# than inline in the YAML so it can be read, reviewed, and run by hand:
+# ── The half that runs ON THE DEPLOY TARGET ─────────────────────────
+# Placed and executed by the deploy workflows — copied there directly by a
+# self-hosted runner's own job, or (if you point these workflows at a
+# remote host again some day) uploaded over SSH. Either way this script does
+# not care how it got there or how it's invoked; it lives in the repo rather
+# than inline in the YAML so it can also be read, reviewed, and run by hand:
 #
-#   cd /srv/travel/production && ./remote-up.sh
+#   cd ~/travel/production && ./remote-up.sh
 #
 # Expects, in the current directory:
 #   docker-compose.deploy.yml
