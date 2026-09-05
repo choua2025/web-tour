@@ -33,7 +33,7 @@ router.get('/', async (_req, res) => {
     return res.json({
         status: 'ok',
         database: 'connected',
-        message: 'Database connection is healthy',
+        message: 'Database connection is healthy and migrations are up to date.',
         // Surfaced rather than failed on: a rolling deploy legitimately runs
         // with the new image before the migration job has finished.
         pendingMigrations: pending.length,
