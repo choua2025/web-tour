@@ -15,6 +15,13 @@ import healthRoutes from './health.routes.js';
 
 const router = Router();
 
+router.get('/', (_req, res) => {
+    res.json({
+        message: 'Welcome to the Travel Booking API',
+        version: '1.0.0',
+    });
+});
+
 router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/destinations', destinationRoutes);
