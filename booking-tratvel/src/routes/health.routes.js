@@ -10,6 +10,22 @@ const router = Router();
 // A container that answers before the database is reachable would be marked
 // healthy and start receiving traffic it cannot serve, so the check actually
 // touches the connection rather than just returning 200.
+router.get('/ready', async (_req, res) => {
+    return res.json({
+        status: 'ok',
+        message: 'Server is ready to accept requests.',
+    });
+});
+
+if (process.env.NODE_ENV === 'test') {
+    router.get('/test', async (_req, res) => {
+        return res.json({
+            status: 'ok',
+            message: 'Test environment is healthy.',
+        });
+    });
+}
+
 router.get('/', async (_req, res) => {
     const started = Date.now();
 

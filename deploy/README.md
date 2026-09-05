@@ -47,7 +47,7 @@ lets you require a reviewer to approve before anything touches production.
 | secret | `DB_PASSWORD` | **yes** | Postgres password for the production database |
 | secret | `JWT_SECRET` | **yes** | `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
 | var | `PUBLIC_API_URL` | **yes** | The address browsers reach the API at — `http://localhost:9001/api` works from Windows against a WSL2 runner; use a LAN IP or domain to reach it from elsewhere |
-| var | `FRONTEND_URL` | **yes** | Where Stripe returns the customer after checkout — the storefront's public URL |
+| var | `a` | **yes** | Where Stripe returns the customer after checkout — the storefront's public URL |
 | var | `PRODUCTION_URL` | recommended | Storefront's public URL — becomes the Environment's clickable URL and is smoke-tested after every deploy |
 | var | `ADMIN_URL` | recommended | Admin console's public URL — smoke-tested if set |
 | secret | `MAIL_USER` / `MAIL_PASS` | optional | Gmail needs an App Password, not the account password |
