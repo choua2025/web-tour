@@ -15,14 +15,19 @@
 name: Deploy production
 
 on:
-  # Fires after a build workflow finishes on the default branch. workflow_run
-  # also fires on failure, so the job below checks the conclusion first.
-  workflow_run:
-    workflows: [API, Storefront, Admin]
-    types: [completed]
-    branches: [main, master]
-
-  # Redeploy, or pin a specific tag, without pushing a commit.
+  # Manual only, for now: there is no production server configured yet, so
+  # firing this automatically would just fail on every push to main. See
+  # deploy/README.md for the full checklist (a reachable DEPLOY_HOST,
+  # DEPLOY_SSH_KEY, DB_PASSWORD, JWT_SECRET, ... on the `production`
+  # environment). Once that's done, restore automatic deploys by adding:
+  #
+  #   workflow_run:
+  #     workflows: [API, Storefront, Admin]
+  #     types: [completed]
+  #     branches: [main, master]
+  #
+  # back under `on:` — the job's `environment: production` gate and the
+  # smoke test below don't need to change.
   workflow_dispatch:
     inputs:
       tag:
@@ -41,12 +46,6 @@ jobs:
     name: Roll out to production
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
-    # Skip the runs where the build failed. A manual dispatch carries no
-    # workflow_run context, so it always passes this.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
 
     # Hang required reviewers, the deployment URL and the production
     # secrets off this in Settings → Environments. Without it, any green

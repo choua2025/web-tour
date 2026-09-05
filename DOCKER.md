@@ -139,7 +139,7 @@ does not rebuild the API.
 | [storefront.yml](.github/workflows/storefront.yml) | `booking-frontend/**` | `nuxt build`, then pushes the image |
 | [stack.yml](.github/workflows/stack.yml) | any `docker-compose.yml` | Brings the whole stack up and checks every service answers |
 | [deploy-preview.yml](.github/workflows/deploy-preview.yml) | a pull request touching app code | Builds `pr-<N>` images, deploys a full standalone stack, comments the URLs on the PR, tears it down on close |
-| [deploy-production.yml](.github/workflows/deploy-production.yml) | API/Storefront/Admin succeeding on `main` | Pins `latest` to digests, rolls them onto the server, rolls back automatically if the new release doesn't come up healthy |
+| [deploy-production.yml](.github/workflows/deploy-production.yml) | manually (Actions tab → Run workflow) — see below | Pins `latest` to digests, rolls them onto the server, rolls back automatically if the new release doesn't come up healthy |
 
 The API workflow builds its Postgres from the migration files and nothing
 else, which is what makes two of its steps worth the time:
@@ -190,8 +190,14 @@ SSH, using [deploy/docker-compose.deploy.yml](deploy/docker-compose.deploy.yml)
 (pulls pinned-digest images, never builds) and
 [deploy/remote-up.sh](deploy/remote-up.sh) (swaps `.env`, pulls, brings the
 stack up with `--wait`, and rolls back to the previous `.env` automatically
-if the new release doesn't come up healthy). Both need, at minimum,
-`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_SSH_KNOWN_HOSTS`,
-`DB_PASSWORD`, and `JWT_SECRET` set as repository or environment secrets —
-production deploys are gated behind a `production` GitHub Environment so
-they don't run unattended on every green build.
+if the new release doesn't come up healthy). See
+[deploy/README.md](deploy/README.md) for the full list of secrets and
+variables each one needs, and a first-deploy checklist.
+
+**`deploy-production.yml` currently fires by manual dispatch only** — there
+is no production server configured yet, and firing it automatically would
+just fail on every push to main. The workflow file has a comment showing
+exactly what to add back to `on:` once the server and its secrets exist.
+Production deploys are also gated behind a `production` GitHub Environment,
+so once auto-deploy is restored it still won't run unattended unless that
+environment is left without required reviewers.
