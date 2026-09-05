@@ -13,7 +13,7 @@ const router = Router();
 router.get('/ready', async (_req, res) => {
     return res.json({
         status: 'ok',
-        message: 'Server is ready to accept requests.',
+        message: 'Server is ready to accept requests and connect to the database.',
     });
 });
 
