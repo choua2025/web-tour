@@ -103,8 +103,20 @@ jobs:
             svc="${pair%%:*}"; repo="${pair#*:}"
             ref="ghcr.io/${owner}/${repo}:${TAG}"
 
-            if ! digest=$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}' 2>/dev/null); then
+            # Parsed from the plain-text default output rather than
+            # `--format '{{.Manifest.Digest}}'`: that Go template field isn't
+            # supported the same way across buildx versions, and a
+            # self-hosted runner's buildx is not guaranteed to match what
+            # GitHub-hosted runners ship. A mismatched template silently
+            # falls back to the multi-line default output, and that alone is
+            # enough to break $GITHUB_OUTPUT (it requires one `key=value` per
+            # line). The top "Digest:" line is stable across versions.
+            if ! digest=$(docker buildx imagetools inspect "$ref" 2>/dev/null | awk '/^Digest:/ {print $2; exit}'); then
               echo "::error::no image at ${ref} — has the ${svc} build workflow published one?"
+              exit 1
+            fi
+            if [ -z "$digest" ]; then
+              echo "::error::could not parse a digest for ${ref} — is 'docker buildx' installed and working on this runner?"
               exit 1
             fi
 
