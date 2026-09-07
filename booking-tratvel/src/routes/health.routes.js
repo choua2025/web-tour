@@ -13,7 +13,7 @@ const router = Router();
 router.get('/ready', async (_req, res) => {
     return res.json({
         status: 'ok',
-        message: 'Container is healthy.',
+        message: 'Container is healthy. Database connection is reachable.',
     });
 });
 
