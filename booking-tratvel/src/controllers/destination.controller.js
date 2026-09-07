@@ -14,6 +14,17 @@ const getAll = async (req, res) => {
     }
 };
 
+const getAllDestinations = async (req, res) => {
+    try {
+        const destinations = await Destination.findAll({
+            include: ['tours', 'hotels'],
+        });
+        return res.json({ success: true, data: destinations });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 // GET destination by ID
 const getById = async (req, res) => {
     try {
@@ -89,4 +100,4 @@ const remove = async (req, res) => {
     }
 };
 
-export { getAll, getById, create, update, remove };
+export { getAll, getAllDestinations, getById, create, update, remove };

@@ -8,6 +8,7 @@ import { ROLES } from '../constants/roles.js';
 const router = Router();
 
 router.get('/', destinationController.getAll);
+router.get('/all', destinationController.getAllDestinations);
 router.get('/:id', destinationController.getById);
 router.post('/', authenticate, authorize(ROLES.ADMIN), uploadSingle, destinationController.create);
 router.put('/:id', authenticate, authorize(ROLES.ADMIN), uploadSingle, destinationController.update);

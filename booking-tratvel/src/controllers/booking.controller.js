@@ -108,6 +108,8 @@ const getAll = async (req, res) => {
             distinct: true,
         });
 
+        
+
         return res.json({
             success: true,
             data: rows,
