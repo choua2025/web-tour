@@ -17,6 +17,8 @@ const router = Router();
 
 router.get('/', (_req, res) => {
     res.json({
+        code: 200,
+        status: 'ok',
         message: 'Welcome to the Travel Booking API',
         version: '1.0.0',
     });
