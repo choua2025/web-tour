@@ -14,7 +14,7 @@ name: travel-booking
 services:
   # ── database ──────────────────────────────────────────────────────
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-booking_system}
