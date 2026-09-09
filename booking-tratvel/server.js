@@ -39,7 +39,7 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), pay
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.get('/health', (req, res) => res.json({ status: 'ok', message: 'Server is running' }));
+app.get('/', (req, res) => res.json({ status: 'ok', message: 'Server is running' }));
 
 // ── API Routes ─────────────────────────────────
 app.use('/api', routes);
