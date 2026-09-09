@@ -1,6 +1,20 @@
 # ── API (booking-tratvel) ───────────────────────────────────────────
 # Runs only when the API changes. The two front ends have their own
 # workflows so a storefront tweak does not rebuild the API image.
+#
+# Three stages, chained with `needs:` so each only starts once the one
+# before it succeeds — a broken commit stops before anything reaches GHCR:
+#
+#   build (does the image even build?)
+#     -> test (does the app actually work, against a real Postgres?)
+#       -> publish (push the image — only for a push to main/master)
+#
+# `publish` is the actual GHCR push. Deploying that image onto the runner is
+# a separate workflow (deploy-production.yml), triggered once this whole
+# workflow finishes — so there are really five stages end to end, just not
+# all expressible as `needs:` in one file: `needs:` only chains jobs inside
+# the same workflow, and deploy-production.yml also waits on Storefront and
+# Admin, which live in their own workflow files.
 
 name: API
 
@@ -28,9 +42,33 @@ defaults:
     working-directory: booking-tratvel
 
 jobs:
-  # ── does the API actually work? ───────────────────────────────────
-  verify:
-    name: Verify against a real Postgres
+  # ── stage 1: does the image even build? ───────────────────────────
+  # Builds the Docker image but pushes nothing anywhere — a Dockerfile-level
+  # break (a bad COPY, a dependency that only resolves outside Docker) is a
+  # different failure mode than the app-level checks in `test`, and this
+  # catches it before the slower Postgres-backed job even starts. The layer
+  # cache it writes here is what makes `publish`'s later, real build fast.
+  build:
+    name: Build image (no push)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build (cache only, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./booking-tratvel
+          push: false
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+  # ── stage 2: does the API actually work? ──────────────────────────
+  test:
+    name: Test against a real Postgres
+    needs: build
     runs-on: ubuntu-latest
 
     # A throwaway database for this job only. Reachable on localhost:5432.
@@ -129,11 +167,14 @@ jobs:
           grep -q '"database":"connected"' health.json \
             || { echo "::error::API booted but cannot reach the database"; exit 1; }
 
-  # ── build and publish the image ───────────────────────────────────
-  image:
-    name: Build and push image
-    needs: verify
-    # Pull requests get the verify job only. Publishing from a PR would let a
+  # ── stage 3: publish the image ─────────────────────────────────────
+  # Only reached if both build and test succeeded, so nothing broken ever
+  # gets a real tag on GHCR. Rebuilds — but `cache-from` pulls every layer
+  # stage 1 already produced, so this is normally seconds, not minutes.
+  publish:
+    name: Push image to GHCR
+    needs: test
+    # Pull requests get build + test only. Publishing from a PR would let a
     # fork overwrite your images.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -184,8 +225,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Reuses layers from previous runs; without it every build
-          # reinstalls node_modules from scratch.
+          # Same cache scope as `build`, so this reuses those layers instead
+          # of reinstalling node_modules and re-copying source from scratch.
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
