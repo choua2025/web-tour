@@ -14,6 +14,7 @@ import eventRoutes from './events.routes.js';
 import healthRoutes from './health.routes.js';
 import loginRoutes from './login.routes.js';
 import testRoutes from './test.routes.js';
+import test1Routes from './test1.routes.js';
 
 const router = Router();
 
@@ -40,5 +41,6 @@ router.use('/events', eventRoutes);
 router.use('/health', healthRoutes);
 router.use('/login', loginRoutes);
 router.use('/test', testRoutes);
+router.use('/test1', test1Routes);
 
 export default router;
