@@ -12,6 +12,7 @@ import reviewRoutes from './review.routes.js';
 import contactRoutes from './contact.routes.js';
 import eventRoutes from './events.routes.js';
 import healthRoutes from './health.routes.js';
+import loginRoutes from './login.routes.js';
 
 const router = Router();
 
@@ -36,5 +37,6 @@ router.use('/reviews', reviewRoutes);
 router.use('/contact', contactRoutes);
 router.use('/events', eventRoutes);
 router.use('/health', healthRoutes);
+router.use('/login', loginRoutes);
 
 export default router;
