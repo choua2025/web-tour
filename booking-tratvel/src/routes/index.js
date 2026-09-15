@@ -13,6 +13,7 @@ import contactRoutes from './contact.routes.js';
 import eventRoutes from './events.routes.js';
 import healthRoutes from './health.routes.js';
 import loginRoutes from './login.routes.js';
+import signupRoutes from './signup.routes.js';
 
 
 const router = Router();
@@ -39,6 +40,7 @@ router.use('/contact', contactRoutes);
 router.use('/events', eventRoutes);
 router.use('/health', healthRoutes);
 router.use('/login', loginRoutes);
+router.use('/signup', signupRoutes);
 
 
 export default router;
