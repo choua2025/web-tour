@@ -1,18 +1,12 @@
 # ── Deploy: production ──────────────────────────────────────────────
 # The CD half. API / Storefront / Admin each build, test and publish one
 # image; this takes the three that are current on the default branch, pins
-# them to their digests, and rolls them onto the deploy target.
+# them to their digests, and rolls them onto the server over SSH.
 #
 # It never builds anything. If an image is missing, this stops rather than
 # shipping a stale mixture of releases.
 #
-# Runs on a self-hosted runner living on the user's own WSL Ubuntu machine
-# — no inbound access, SSH key or password involved. The runner reaches out
-# to GitHub for the job and does everything in its own shell, which already
-# IS the deploy target, so this is a normal `docker compose` rollout with no
-# network transport in the middle.
-#
-# What lives at DEPLOY_PATH on the runner:
+# What lives on the server (DEPLOY_PATH):
 #   docker-compose.deploy.yml   copied from the repo on every deploy
 #   remote-up.sh                the rollout + rollback script, same
 #   .env                        rendered here from secrets, never committed
@@ -37,7 +31,7 @@ on:
         default: latest
 
 # Deploys queue rather than cancel: interrupting one halfway would leave the
-# runner's Docker running containers from two different releases.
+# server running containers from two different releases.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
@@ -45,7 +39,7 @@ concurrency:
 jobs:
   deploy:
     name: Roll out to production
-    runs-on: [self-hosted, linux, wsl-ubuntu]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     # Skip the runs where the build failed. A manual dispatch carries no
@@ -68,18 +62,10 @@ jobs:
     env:
       TAG: ${{ inputs.tag || 'latest' }}
       STACK_NAME: travel-prod
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/srv/travel/production' }}
 
     steps:
       - uses: actions/checkout@v4
-
-      # Resolved in the runner's own shell rather than the YAML `${{ }}`
-      # expression above — a literal '$HOME' baked into that expression
-      # would never get expanded, since GitHub Actions evaluates `${{ }}`
-      # before any shell sees the value.
-      - name: Resolve the deploy path
-        run: echo "DEPLOY_PATH=${DEPLOY_PATH:-$HOME/travel/production}" >> "$GITHUB_ENV"
-        env:
-          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -91,8 +77,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # `latest` is a moving target: it can point somewhere else five
-      # minutes from now, so a run told to deploy `latest` cannot say what
-      # it deployed and cannot be rolled back to it. Resolving to a digest
+      # minutes from now, so a server told to run `latest` cannot say what
+      # it is running and cannot be rolled back to it. Resolving to a digest
       # here freezes the release, and makes the saved .env a complete,
       # replayable description of it.
       - name: Resolve tags to digests
@@ -104,19 +90,17 @@ jobs:
             ref="ghcr.io/${owner}/${repo}:${TAG}"
 
             # Parsed from the plain-text default output rather than
-            # `--format '{{.Manifest.Digest}}'`: that Go template field isn't
-            # supported the same way across buildx versions, and a
-            # self-hosted runner's buildx is not guaranteed to match what
-            # GitHub-hosted runners ship. A mismatched template silently
-            # falls back to the multi-line default output, and that alone is
-            # enough to break $GITHUB_OUTPUT (it requires one `key=value` per
-            # line). The top "Digest:" line is stable across versions.
+            # `--format '{{.Manifest.Digest}}'`: that Go template field
+            # isn't supported identically across buildx versions, and a
+            # mismatched template silently falls back to the multi-line
+            # default output, which breaks $GITHUB_OUTPUT. The top
+            # "Digest:" line is stable across versions.
             if ! digest=$(docker buildx imagetools inspect "$ref" 2>/dev/null | awk '/^Digest:/ {print $2; exit}'); then
               echo "::error::no image at ${ref} — has the ${svc} build workflow published one?"
               exit 1
             fi
             if [ -z "$digest" ]; then
-              echo "::error::could not parse a digest for ${ref} — is 'docker buildx' installed and working on this runner?"
+              echo "::error::could not parse a digest for ${ref}"
               exit 1
             fi
 
@@ -126,9 +110,7 @@ jobs:
 
       # Values arrive through `env:` and are written with printf rather than
       # pasted into the script text, so a password containing a quote, a $
-      # or a backtick cannot break the file or get executed. Written
-      # straight to DEPLOY_PATH — no transfer step, this shell already runs
-      # on the deploy target.
+      # or a backtick cannot break the file or get executed.
       - name: Render .env
         env:
           API_IMAGE: ${{ steps.images.outputs.api_image }}
@@ -169,9 +151,8 @@ jobs:
             fi
           done
 
-          mkdir -p "$DEPLOY_PATH"
           umask 077
-          : > "$DEPLOY_PATH/.env.incoming"
+          : > .env.render
           for k in STACK_NAME API_IMAGE ADMIN_IMAGE STOREFRONT_IMAGE \
                    API_PORT ADMIN_PORT STOREFRONT_PORT \
                    PUBLIC_API_URL FRONTEND_URL LOG_REQUESTS \
@@ -179,26 +160,60 @@ jobs:
                    MAIL_HOST MAIL_PORT MAIL_USER MAIL_PASS \
                    CLOUDINARY_CLOUD_NAME CLOUDINARY_API_KEY CLOUDINARY_API_SECRET \
                    STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET; do
-            printf '%s=%s\n' "$k" "${!k}" >> "$DEPLOY_PATH/.env.incoming"
+            printf '%s=%s\n' "$k" "${!k}" >> .env.render
           done
 
-      - name: Place the compose file and rollout script
-        run: cp deploy/docker-compose.deploy.yml deploy/remote-up.sh "$DEPLOY_PATH/"
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ]; then
+            echo "::error::DEPLOY_SSH_KEY and DEPLOY_SSH_KNOWN_HOSTS must be set — see deploy/README.md"
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+          # Pinned host keys, not StrictHostKeyChecking=no. With the check
+          # off, anything that answers on that address collects the deploy
+          # key and every secret in the .env below.
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload the release
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" "mkdir -p '$DEPLOY_PATH'"
+
+          scp -i ~/.ssh/id_deploy -P "$PORT" \
+            deploy/docker-compose.deploy.yml deploy/remote-up.sh \
+            "$SSH_USER@$HOST:$DEPLOY_PATH/"
+
+          # The .env lands under a temp name and remote-up.sh moves it into
+          # place, so an interrupted transfer leaves the previous working
+          # .env untouched instead of a half-written one.
+          scp -i ~/.ssh/id_deploy -P "$PORT" .env.render "$SSH_USER@$HOST:$DEPLOY_PATH/.env.incoming"
 
       - name: Deploy
         env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
         run: |
-          cd "$DEPLOY_PATH"
-          chmod +x remote-up.sh
-          ./remote-up.sh
+          ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
+            "cd '$DEPLOY_PATH' && chmod +x remote-up.sh && GHCR_USER='${{ github.actor }}' GHCR_TOKEN='$GHCR_TOKEN' ./remote-up.sh"
 
       # Healthy containers are not the same as a working site: the API can
       # be up while unable to reach its database, and a front end can
-      # render while pointing at the wrong API. These hit the real URLs —
-      # `localhost` is valid here since this shell runs on the same machine
-      # that's now serving the stack.
+      # render while pointing at the wrong API. These hit the real public
+      # URLs.
       - name: Smoke-test production
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
@@ -207,7 +222,7 @@ jobs:
         run: |
           fail() { echo "::error::$1"; exit 1; }
 
-          # A rollout takes a moment to settle; give it one.
+          # A rollout takes a moment to settle behind a proxy; give it one.
           for i in $(seq 1 30); do
             curl -fsS "$PUBLIC_API_URL/health" -o health.json && break
             sleep 2
@@ -238,7 +253,6 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| tag | \`${TAG}\` |"
-            echo "| deploy path | \`${DEPLOY_PATH}\` |"
             echo "| api | \`${{ steps.images.outputs.api_image }}\` |"
             echo "| admin | \`${{ steps.images.outputs.admin_image }}\` |"
             echo "| storefront | \`${{ steps.images.outputs.storefront_image }}\` |"
