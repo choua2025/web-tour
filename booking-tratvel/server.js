@@ -54,7 +54,7 @@ app.use('/api', routes);
 const start = async () => {
     try {
         await sequelize.authenticate();
-        console.log('✅ Database connected');
+        console.log('✅ Database connected successfully.');
 
         const pending = await pendingMigrations();
         if (pending.length) {
