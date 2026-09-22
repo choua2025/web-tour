@@ -55,7 +55,7 @@ These four are unconditional — SSH won't even start without them:
 | var | `MAIL_HOST` / `MAIL_PORT` | optional | Default `smtp.gmail.com` / `587` |
 | var | `API_PORT` / `ADMIN_PORT` / `STOREFRONT_PORT` | optional | Default `9001` / `3000` / `3001` |
 | var | `DEPLOY_SSH_PORT` | optional | Default `22` |
-| var | `DEPLOY_PATH` | optional | Default `/srv/travel/production` — needs to exist with `DEPLOY_USER` able to write to it (`sudo mkdir -p /srv/travel/production && sudo chown $DEPLOY_USER /srv/travel/production`), or point it at something under the user's own home instead |
+| var | `DEPLOY_PATH` | optional | Default `/home/choua/travel/production` — under `DEPLOY_USER`'s own home, so no `sudo`/`chown` is needed before the first deploy |
 | var | `LOG_REQUESTS` | optional | Default `false` |
 
 ## `preview` environment (per-pull-request stacks)
@@ -65,7 +65,7 @@ These four are unconditional — SSH won't even start without them:
 | secret | `PREVIEW_JWT_SECRET` | **yes** | Separate from production's — a preview is not a place to reuse the real secret |
 | secret | `PREVIEW_DB_PASSWORD` | recommended | Falls back to `DB_PASSWORD` if unset, but a dedicated one keeps the throwaway preview database out of anything real |
 | var | `PREVIEW_HOST` | optional | Falls back to `DEPLOY_HOST`. Set this instead if previews live on a different box than production |
-| var | `PREVIEW_ROOT` | optional | Default `/srv/travel/previews` — a sibling of `DEPLOY_PATH`, never inside it |
+| var | `PREVIEW_ROOT` | optional | Default `/home/choua/travel/previews` — a sibling of `DEPLOY_PATH`, never inside it |
 | secret | `PREVIEW_MAIL_USER` / `PREVIEW_MAIL_PASS` | optional | |
 | secret | `PREVIEW_CLOUDINARY_CLOUD_NAME` / `PREVIEW_CLOUDINARY_API_KEY` / `PREVIEW_CLOUDINARY_API_SECRET` | optional | |
 | secret | `PREVIEW_STRIPE_SECRET_KEY` | optional | Test-mode key, or leave blank. Never a live key — a preview is where broken checkout code is expected to run |

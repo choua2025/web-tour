@@ -62,7 +62,7 @@ jobs:
     env:
       TAG: ${{ inputs.tag || 'latest' }}
       STACK_NAME: travel-prod
-      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/srv/travel/production' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/home/choua/travel/production' }}
 
     steps:
       - uses: actions/checkout@v4

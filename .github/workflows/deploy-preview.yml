@@ -216,7 +216,7 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Deliberately a sibling of production, never inside it, so a
           # mistyped path here cannot land on the production stack.
-          PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/srv/travel/previews' }}/pr-${{ github.event.pull_request.number }}
+          PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/home/choua/travel/previews' }}/pr-${{ github.event.pull_request.number }}
         run: |
           ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" "mkdir -p '$PREVIEW_PATH'"
 
@@ -321,7 +321,7 @@ jobs:
           HOST: ${{ secrets.DEPLOY_HOST }}
           SSH_USER: ${{ secrets.DEPLOY_USER }}
           PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
-          PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/srv/travel/previews' }}/pr-${{ github.event.pull_request.number }}
+          PREVIEW_PATH: ${{ vars.PREVIEW_ROOT || '/home/choua/travel/previews' }}/pr-${{ github.event.pull_request.number }}
         run: |
           # `-v` takes the database volume with it. That is the point: it is a
           # throwaway database, and leaving it behind fills the disk one merged
