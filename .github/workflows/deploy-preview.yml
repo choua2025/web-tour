@@ -225,8 +225,10 @@ jobs:
             "$SSH_USER@$HOST:$PREVIEW_PATH/"
           scp -i ~/.ssh/id_deploy -P "$PORT" .env.render "$SSH_USER@$HOST:$PREVIEW_PATH/.env.incoming"
 
+          # SKIP_BACKUP: a preview's database is throwaway and destroyed with
+          # the PR, so dumping it on every push would only waste disk.
           ssh -i ~/.ssh/id_deploy -p "$PORT" "$SSH_USER@$HOST" \
-            "cd '$PREVIEW_PATH' && chmod +x remote-up.sh && GHCR_USER='${{ github.actor }}' GHCR_TOKEN='$GHCR_TOKEN' ./remote-up.sh"
+            "cd '$PREVIEW_PATH' && chmod +x remote-up.sh && SKIP_BACKUP=1 GHCR_USER='${{ github.actor }}' GHCR_TOKEN='$GHCR_TOKEN' ./remote-up.sh"
 
       # The same assertions production gets. A preview that is quietly
       # broken is worse than no preview: someone reviews it, sees a blank

@@ -151,6 +151,14 @@ jobs:
             fi
           done
 
+          # With a live Stripe key but no webhook secret the API accepts
+          # payment webhooks without checking their signature, so anyone who
+          # can reach /api/payments/webhook could mark a booking as paid.
+          if [ -n "$STRIPE_SECRET_KEY" ] && [ -z "$STRIPE_WEBHOOK_SECRET" ]; then
+            echo "::error::STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is empty — the payments webhook would accept unsigned requests. Set STRIPE_WEBHOOK_SECRET on the production environment (or remove STRIPE_SECRET_KEY)."
+            exit 1
+          fi
+
           umask 077
           : > .env.render
           for k in STACK_NAME API_IMAGE ADMIN_IMAGE STOREFRONT_IMAGE \

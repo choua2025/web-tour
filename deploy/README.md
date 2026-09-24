@@ -50,10 +50,10 @@ These four are unconditional — SSH won't even start without them:
 | var | `ADMIN_URL` | recommended | Admin console's public URL — smoke-tested if set |
 | secret | `MAIL_USER` / `MAIL_PASS` | optional | Gmail needs an App Password, not the account password |
 | secret | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | optional | Blank disables uploads |
-| secret | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | optional | Live keys — never the preview/test ones |
+| secret | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | optional, but paired | Live keys — never the preview/test ones. If `STRIPE_SECRET_KEY` is set the deploy **refuses to run** without `STRIPE_WEBHOOK_SECRET`: with it blank the API accepts payment webhooks unsigned, so anyone could mark a booking as paid |
 | var | `DB_NAME` / `DB_USER` | optional | Default `booking_system` / `postgres` |
 | var | `MAIL_HOST` / `MAIL_PORT` | optional | Default `smtp.gmail.com` / `587` |
-| var | `API_PORT` / `ADMIN_PORT` / `STOREFRONT_PORT` | optional | Default `9001` / `3000` / `3001` |
+| var | `API_PORT` / `ADMIN_PORT` / `STOREFRONT_PORT` | optional | Host ports the three services are published on. Default `9001` / `3003` / `3002`. These must be free on the server, and anything that still says `:3000`/`:3001` in `PRODUCTION_URL`, `ADMIN_URL` or `FRONTEND_URL` has to follow them |
 | var | `DEPLOY_SSH_PORT` | optional | Default `22` |
 | var | `DEPLOY_PATH` | optional | Default `/home/choua/travel/production` — under `DEPLOY_USER`'s own home, so no `sudo`/`chown` is needed before the first deploy |
 | var | `LOG_REQUESTS` | optional | Default `false` |
@@ -73,6 +73,42 @@ These four are unconditional — SSH won't even start without them:
 Preview never needs `PREVIEW_STRIPE_WEBHOOK_SECRET` — the workflow leaves it
 blank on purpose, so the webhook trusts the request body unverified, which
 is fine because nothing real points Stripe at a preview.
+
+## What `remote-up.sh` does on every deploy
+
+In this order, so a failure at any step leaves something the next run can
+still reason about:
+
+1. **Pull** the three app images (against `.env.incoming`; `.env` is not
+   touched yet). Postgres is deliberately *not* pulled, so deploying code can
+   never restart the database as a side effect — upgrade it on purpose with
+   `docker compose --env-file .env -f docker-compose.deploy.yml pull db`.
+2. **Back up the database** to `backups/pre-deploy-<timestamp>.sql.gz` inside
+   `DEPLOY_PATH`, before the migration container can change anything. The
+   newest 10 are kept (`KEEP_BACKUPS=n` to change). If the dump fails the
+   deploy stops rather than migrating without a safety net; re-run with
+   `SKIP_BACKUP=1` only if the dump itself is what's broken. Skipped on the
+   very first deploy, when there is no database yet.
+3. **Swap `.env`**, keeping the old one as `.env.previous`.
+4. **`up --wait`**, and on failure restore `.env.previous` and redeploy it.
+
+Restore a dump with:
+
+```bash
+cd ~/travel/production
+gunzip -c backups/pre-deploy-<timestamp>.sql.gz \
+  | docker compose --env-file .env -f docker-compose.deploy.yml exec -T db \
+      sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+**Rollback restores the images, not the schema.** If the new release already
+ran a migration before it failed its health check, the previous release ends
+up running against that newer schema. That's fine for additive migrations
+(new tables/columns) and dangerous for destructive ones (drops, renames) —
+the pre-deploy dump is the recovery path for those.
+
+Container logs are capped at 3 × 10 MB each, so a long-running server doesn't
+fill its disk.
 
 ## First deploy checklist
 
