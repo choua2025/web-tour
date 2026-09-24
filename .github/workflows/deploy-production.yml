@@ -118,8 +118,8 @@ jobs:
           STOREFRONT_IMAGE: ${{ steps.images.outputs.storefront_image }}
 
           API_PORT: ${{ vars.API_PORT || '9001' }}
-          ADMIN_PORT: ${{ vars.ADMIN_PORT || '3000' }}
-          STOREFRONT_PORT: ${{ vars.STOREFRONT_PORT || '3001' }}
+          ADMIN_PORT: ${{ vars.ADMIN_PORT || '3003' }}
+          STOREFRONT_PORT: ${{ vars.STOREFRONT_PORT || '3002' }}
 
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
           FRONTEND_URL: ${{ vars.FRONTEND_URL }}
