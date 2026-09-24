@@ -17,7 +17,7 @@ services:
     image: travel-booking/admin:${TAG:-latest}
     restart: unless-stopped
     environment:
-      PORT: 3000
+      PORT: 3003
       HOST: 0.0.0.0
       NODE_ENV: production
 
@@ -27,4 +27,4 @@ services:
       # storefront's confirmation page, which does render server-side).
       NUXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:9001/api}
     ports:
-      - "${ADMIN_PORT:-3000}:3000"
+      - "${ADMIN_PORT:-3003}:3003"

@@ -17,7 +17,7 @@ services:
     image: travel-booking/storefront:${TAG:-latest}
     restart: unless-stopped
     environment:
-      PORT: 3001
+      PORT: 3002
       HOST: 0.0.0.0
       NODE_ENV: production
 
@@ -36,4 +36,4 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${STOREFRONT_PORT:-3001}:3001"
+      - "${STOREFRONT_PORT:-3002}:3002"

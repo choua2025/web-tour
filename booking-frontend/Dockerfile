@@ -25,7 +25,7 @@ FROM node:${NODE_VERSION}-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3001
+ENV PORT=3002
 ENV HOST=0.0.0.0
 # Nitro reads runtimeConfig.public.apiBase from this at container start, not
 # at build time — so the same image runs unmodified in every environment.
@@ -37,7 +37,7 @@ COPY --from=build /app/.output ./.output
 
 USER node
 
-EXPOSE 3001
+EXPOSE 3002
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -fsS http://localhost:${PORT}/ || exit 1
