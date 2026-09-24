@@ -114,7 +114,7 @@ services:
       api:
         condition: service_healthy
     environment:
-      PORT: 3000
+      PORT: 3003
       HOST: 0.0.0.0
       NODE_ENV: production
       # Read by the visitor's BROWSER, so it has to be an address the
@@ -123,7 +123,7 @@ services:
       # arrives at container start, not at build time.
       NUXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?set PUBLIC_API_URL}
     ports:
-      - "${ADMIN_PORT:?set ADMIN_PORT}:3000"
+      - "${ADMIN_PORT:?set ADMIN_PORT}:3003"
 
   # ── storefront ────────────────────────────────────────────────────
   storefront:
@@ -134,7 +134,7 @@ services:
       api:
         condition: service_healthy
     environment:
-      PORT: 3001
+      PORT: 3002
       HOST: 0.0.0.0
       NODE_ENV: production
       NUXT_PUBLIC_API_BASE: ${PUBLIC_API_URL}
@@ -144,7 +144,7 @@ services:
       # API is simply `api`.
       NUXT_API_BASE_SERVER: http://api:9001/api
     ports:
-      - "${STOREFRONT_PORT:?set STOREFRONT_PORT}:3001"
+      - "${STOREFRONT_PORT:?set STOREFRONT_PORT}:3002"
 
 volumes:
   db-data:
