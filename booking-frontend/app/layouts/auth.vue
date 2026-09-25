@@ -17,6 +17,7 @@
           </svg>
         </div>
         <span class="font-heading text-2xl font-bold text-white">Travel<span class="text-accent-200">Plus</span>booking</span>
+        <span class="text-xs font-medium text-white/50 mt-2">by <span class="text-white">TravelPlus</span></span>
       </NuxtLink>
 
       <!-- Auth Card -->
